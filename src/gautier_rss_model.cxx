@@ -80,7 +80,7 @@ static const std::string
 
 static const std::vector<std::string> 
 	_element_names = {"title", "link", "description", "pubdate"},
-	_table_names = {"rss_feed_source", "rss_feed_data"}
+	_table_names = {"rss_feed_source", "rss_feed_data", "rss_feed_data_staging"}
 ;
 
 static const xercesc::DOMNode::NodeType 
@@ -340,7 +340,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 				std::string 
 				sql_text = 
-				"INSERT INTO rss_feed_source(name, url) VALUES (@name, @url);";
+				"INSERT INTO rss_feed_source(name, url) VALUES (trim(@name), trim(@url));";
 
 				for(const auto& feed_source : feed_sources)
 				{
@@ -603,7 +603,7 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 				{
 					std::string 
 					sql_text = 
-					"INSERT INTO rss_feed_data \
+					"INSERT INTO rss_feed_data_staging \
 					(\
 						rss_feed_source_id,\
 						pub_date,\
@@ -615,13 +615,11 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 					(\
 						@rss_feed_source_id,\
 						@pub_date,\
-						@title,\
-						@link,\
-						@description\
+						trim(@title),\
+						trim(@link),\
+						trim(@description)\
 					)\
 					;";
-//optimization note .  put this in a staging table to ensure, duplicates are filtered out.
-//will need to define a staging table structure with subsequent purge.
 
 					std::vector<unit_type_parameter_binding> parameter_values = 
 					{
@@ -638,6 +636,57 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 		}
 
 		apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+
+		//Transfers eligible feeds data entries from staging to active.
+		//The staging data remains in place for diagnostic purposes.
+		//Older entries will be purged from both tables.
+		{
+			apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+
+			std::string 
+			sql_text = 
+			"INSERT INTO rss_feed_data ( \
+				 rss_feed_source_id, \
+				 pub_date, \
+				 title, \
+				 link, \
+				 description \
+			) \
+			SELECT \
+				 rss_feed_source_id, \
+				 pub_date, \
+				 title, \
+				 link, \
+				 description \
+			FROM rss_feed_data_staging \
+			WHERE link NOT IN ( \
+				SELECT \
+					 link \
+				FROM rss_feed_data \
+				GROUP BY link \
+			) GROUP BY \
+				 rss_feed_source_id, \
+				 pub_date, \
+				 title, \
+				 link, \
+				 description \
+			ORDER BY \
+				 rss_feed_source_id, \
+				 pub_date DESC, \
+				 title \
+			; \
+			DELETE \
+			FROM rss_feed_data_staging \
+			WHERE (datetime(entry_date, '+8 hour')) < (datetime('now', 'localtime'));\
+			DELETE \
+			FROM rss_feed_data \
+			WHERE (datetime(entry_date, '+1 month')) < (datetime('now', 'localtime'));\
+			";
+
+			apply_sql(&db_connection, sql_text, _empty_param_set, nullptr);
+
+			apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+		}
 
 		sqlite3_close(db_connection);
 	}
@@ -717,7 +766,10 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 				fd.description \
 			FROM rss_feed_source AS fs INNER JOIN \
 			rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
-			ORDER BY fs.name, fd.pub_date, fd.title;\
+			ORDER BY \
+				 fs.name, \
+				 fd.pub_date, \
+				 fd.title;\
 			";
 
 			unit_type_query_values* query_values = 
@@ -1199,7 +1251,7 @@ create_table(sqlite3** db_connection, const std::string& table_name)
 			 );\
 			 ";
 		}
-		else if(table_name == "rss_feed_data")
+		else if(table_name == "rss_feed_data" || table_name == "rss_feed_data_staging")
 		{
 			create_table_statement_text = 
 			"CREATE TABLE " + table_name + "\
