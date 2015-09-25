@@ -15,25 +15,6 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 
-
-
-
-
-
-
-
-
-
-//	9/24/2015
-//	Uses LibXML2 and SQLite.
-//	See the version immediately prior that uses Apache Xerces.
-//	That version and this are 100% in sync aside from the Xml routines.
-//	Decided not to merge them since LibXML2 is the preferred solution 
-//		for programs needing to process smaller xml files quickly 
-//		and could benefit from smaller program file sizes.
-//	The main improvement here is simplified XML processing.
-//	Valgrind reports no memory leaks with leak-check=full.
-//	Total heap usage: 106,546 allocs, 106,546 frees, 43,493,980 bytes allocated.
 namespace ns_grss_model = gautier::rss_model;
 
 //Module level types and type aliases.
@@ -85,10 +66,6 @@ static const std::vector<std::string>
 	_table_names = {"rss_feed_source", "rss_feed_data", "rss_feed_data_staging"}
 ;
 
-
-
-
-
 static std::vector<unit_type_parameter_binding> 
 	_empty_param_set = {
 		unit_type_parameter_binding("", "", parameter_data_type::none)
@@ -114,8 +91,6 @@ static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_
 static void collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
 static std::string get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func);
 static bool is_an_approved_rss_data_name(const std::string& element_name);
-
-
 
 //SQL: Database infrastructure/tables.
 static void db_connection_guard_finalize(sqlite3* obj);
@@ -854,42 +829,6 @@ collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed
 	return;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 //See libxml2 tree1.c example file for the general structure used. 9/24/2015
 static void 
 collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items)
@@ -933,76 +872,27 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 	return;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+static std::string 
+get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func)
+{
+	std::string value;
+
+	if(xstring_in)
+	{
+		std::stringstream ostr;
+	
+		ostr << xstring_in;
+
+		value = ostr.str();
+	}
+
+	if(!value.empty() && transform_func)
+	{
+		std::transform(value.begin(), value.end(), value.begin(), transform_func);
+	}
+
+	return value;
+}
 
 //Defines interest in specific element names from the input XML data.
 //This confirms that an element name exists in the list of approved
@@ -1028,65 +918,21 @@ is_an_approved_rss_data_name(const std::string& element_name)
 	return match_found;
 }
 
-static std::string 
-get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func)
-{
-	std::string value;
-
-	if(xstring_in)
-	{
-		std::stringstream ostr;
-	
-		ostr << xstring_in;
-
-		value = ostr.str();
-	}
-
-	if(!value.empty() && transform_func)
-	{
-		std::transform(value.begin(), value.end(), value.begin(), transform_func);
-	}
-
-	return value;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//SQLite3 is not defined in C++. It is defined in C and I used it that way.
+//The implemented functions that use SQLite3 will have a slight C language orientation.
+//Effort was applied to encapsulate various functions to produce a useful abstraction.
+//This also applies to the implementation of the functions: 
+//	filter_feeds_source, save_feeds, and load_saved_feeds; that I defined to use SQLite3.
+//I decided not to use predefined wrapper libraries that sit a C++ interface atop SQLite3 
+//	since the use of SQLite3 in this engine is not extensive. 
+//In terms of the feeds engine, use of SQLite3 is currently limited to this module.
+//It is used to produce an output data structure and maintain persistent data storage that can be 
+//	conveniently queried in ways that streamline resusitation of stored data into an application 
+//	level data structure. The primary output is a data structure of type unit_type_list_rss.
 
 //SQL: Database infrastructure/tables.
 
 //The following functions under this section deals with supporting database structures for the rss engine.
-
-
-
-
-
-
-
-
-
-
-
-
 
 //Governs the deallocation of an sqlite3 pointer through a pointer resource handle.
 static void 
