@@ -1,8 +1,8 @@
 #Directories
 LIB_LOCAL_DIR := ../../../liblocal
 
-LIB_SQLITE3_DIR := $(LIB_LOCAL_DIR)/libsqlite3_gcc
-LIB_XERCES_DIR := $(LIB_LOCAL_DIR)/libxerces_gcc
+LIB_SQL_DIR := $(LIB_LOCAL_DIR)/libsqlite3_gcc
+LIB_XML_DIR := $(LIB_LOCAL_DIR)/libxml2_gcc
 
 SRC_DIR = ../src
 OBJ_DIR := obj
@@ -11,17 +11,17 @@ LIB_DIR := lib
 #Includes
 INC_SYS := $(LIB_LOCAL_DIR)
 
-INC_SQLITE3 := $(LIB_SQLITE3_DIR)/include
-INC_XERCES := $(LIB_XERCES_DIR)/include
+INC_SQL := $(LIB_SQL_DIR)/include
+INC_XML := $(LIB_XML_DIR)/include/libxml2
 
 #Compiler Exceptions
-INC_SYS_FLAGS := -isystem $(INC_SYS) -isystem $(INC_SQLITE3) -isystem $(INC_XERCES) 
+INC_SYS_FLAGS := -isystem $(INC_SYS) -isystem $(INC_SQL) -isystem $(INC_XML) 
 
 #Compiled Objects
 OBJ := $(OBJ_DIR)/sqlite_20150910.o $(OBJ_DIR)/gautier_diagnostics.o $(OBJ_DIR)/gautier_rss_program.o $(OBJ_DIR)/gautier_rss.o $(OBJ_DIR)/gautier_rss_model.o 
 
 #Libraries
-LIB_XERCES := $(LIB_XERCES_DIR)/lib/libxerces-c.a
+LIB_XML := $(LIB_XML_DIR)/lib/libxml2.a
 
 #Compiler parameters. Minimum standard.
 CPP_STD := -std=c++11
@@ -40,13 +40,13 @@ CPP_COMPILE := $(CPP_MIN) -c $(CPP_DBG)
 CPP_LINK := $(CXX) $(CPP_STD) $(OPTO_PARAM) 
 
 #Linker parameters
-LIB_LINK := $(LIB_XERCES) -lpthread -ldl 
+LIB_LINK := $(LIB_XML) -lpthread -ldl -lz -lm
 
 #---------------------------------------------------------------------------------------------START
 
 #Build the program
 gautier_rss_engine : $(OBJ)
-	$(CPP_LINK) -L$(LIB_XERCES_DIR)/lib -o $@ $(OBJ) $(LIB_LINK)
+	$(CPP_LINK) -L$(LIB_XML_DIR)/lib -o $@ $(OBJ) $(LIB_LINK) 
 
 #at this stage in the project, all should compile if any header change
 #beyond that, object files should change if its implementation changes.
@@ -54,12 +54,12 @@ gautier_rss_engine : $(OBJ)
 #Build the object files
 $(OBJ_DIR)/gautier_rss.o: $(SRC_DIR)/main.cxx \
  $(SRC_DIR)/gautier_rss_program.hxx 
-	$(CXX) $(CPP_COMPILE) -I$(INC_SQLITE3) -I$(INC_XERCES) $(INC_SYS_FLAGS) -o $@ $< 
+	$(CXX) $(CPP_COMPILE) -I$(INC_SQL) -I$(INC_XML) $(INC_SYS_FLAGS) -o $@ $< 
 
 $(OBJ_DIR)/gautier_rss_program.o: $(SRC_DIR)/gautier_rss_program.cxx \
  $(SRC_DIR)/gautier_rss_program.hxx \
  $(SRC_DIR)/gautier_rss_model.hxx 
-	$(CXX) $(CPP_COMPILE) -I$(INC_SQLITE3) -I$(INC_XERCES) $(INC_SYS_FLAGS) -o $@ $< 
+	$(CXX) $(CPP_COMPILE) -I$(INC_SQL) -I$(INC_XML) $(INC_SYS_FLAGS) -o $@ $< 
 
 $(OBJ_DIR)/gautier_rss_model.o: $(SRC_DIR)/gautier_rss_model.cxx \
  $(SRC_DIR)/gautier_rss_model.hxx \
@@ -71,10 +71,10 @@ $(OBJ_DIR)/gautier_diagnostics.o : $(SRC_DIR)/gautier_diagnostics.cxx \
 	$(CXX) $(CPP_COMPILE) $(INC_SYS_FLAGS) -o $@ $< 
 
 $(OBJ_DIR)/sqlite_20150910.o : infrastructure_build 
-	cp --update $(LIB_SQLITE3_DIR)/lib/sqlite_20150910.o $(OBJ_DIR)/
+	cp --update $(LIB_SQL_DIR)/lib/sqlite_20150910.o $(OBJ_DIR)/
 
 #Setup prerequisite directories and files.
-infrastructure_build: $(LIB_XERCES) $(LIB_SQLITE3_DIR)/lib/sqlite_20150910.o 
+infrastructure_build: $(LIB_XML) $(LIB_SQL_DIR)/lib/sqlite_20150910.o 
 	mkdir -p $(OBJ_DIR)
 
 .PHONY : clean
