@@ -6,34 +6,34 @@
 #include <string>
 #include <tuple>
 
-#include <xercesc/dom/DOMDocument.hpp>
-#include <xercesc/dom/DOMElement.hpp>
-#include <xercesc/dom/DOM.hpp>
-#include <xercesc/dom/DOMNode.hpp>
-#include <xercesc/dom/DOMNodeList.hpp>
-
-#include <xercesc/parsers/XercesDOMParser.hpp>
-
-#include <xercesc/util/PlatformUtils.hpp>
-#include <xercesc/util/TransService.hpp>
-#include <xercesc/util/XMLString.hpp>
-#include <xercesc/util/XMLUni.hpp>
-
 #include <sqlite3.h>
 
 #include "gautier_diagnostics.hxx"
 #include "gautier_rss_model.hxx"
 
+#include <cstdio>
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+
+
+
+
+
+
+
+
+
+
 //	9/24/2015
-//	Uses Apache Xerces and SQLite.
-//	This module is 100% in sync with the next version of this module.
-//	Decided not to merge them since there was no intent to use Apache Xerces 
-//		in the immediate future.
-//	The improvements to this version includes simplified handling of XML Node Text Values; 
-//		better use of memory; and better names for the logical database layer.
-//	Valgrind reports no memory leaks at the application level with leak-check=full.
-//	However, it does report some minor issues with Apache Xerces amounting to 4 bytes of data.
-//	Total heap usage: 86,357 allocs, 86,356 frees, 41,667,683 bytes allocated.
+//	Uses LibXML2 and SQLite.
+//	See the version immediately prior that uses Apache Xerces.
+//	That version and this are 100% in sync aside from the Xml routines.
+//	Decided not to merge them since LibXML2 is the preferred solution 
+//		for programs needing to process smaller xml files quickly 
+//		and could benefit from smaller program file sizes.
+//	The main improvement here is simplified XML processing.
+//	Valgrind reports no memory leaks with leak-check=full.
+//	Total heap usage: 106,546 allocs, 106,546 frees, 43,493,980 bytes allocated.
 namespace ns_grss_model = gautier::rss_model;
 
 //Module level types and type aliases.
@@ -85,9 +85,9 @@ static const std::vector<std::string>
 	_table_names = {"rss_feed_source", "rss_feed_data", "rss_feed_data_staging"}
 ;
 
-static const xercesc::DOMNode::NodeType 
-	_node_type_element = xercesc::DOMNode::NodeType::ELEMENT_NODE
-;
+
+
+
 
 static std::vector<unit_type_parameter_binding> 
 	_empty_param_set = {
@@ -111,10 +111,10 @@ static void load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds);
 //*These output data structures drive the entire rss engine.
 //*	unit_type_list_rss and unit_type_list_rss_item are the main data structures.
 static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds);
-static void collect_feed_items(const xercesc::DOMElement* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
-static void collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
+static void collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
+static std::string get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func);
 static bool is_an_approved_rss_data_name(const std::string& element_name);
-static std::string get_string_from_xstring(const XMLCh* xstring_in, decltype(switch_letter_case) transform_func);
+
 
 
 //SQL: Database infrastructure/tables.
@@ -818,191 +818,191 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 }
 
 //Retrieves rss data at a given url, decodes the XML into a data structure named, unit_type_list_rss.
-//Retrieval logic is done by Apache Xerces which will pull from a file location or web address.
-//After retrieval, xml represented as DOM objects.
-//The DOM is traversed with relevant DOM items converted into entries in a unit_type_list_rss data structure.
+//Retrieval logic is done by the xml library which will pull from a file location or web address.
+//After retrieval, xml represented as various libxml objects.
+//The linked list is traversed in a compact sequenct that converts entries in a unit_type_list_rss data structure.
 static void 
 collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds)
 {
-	xercesc::XMLPlatformUtils::Initialize();
+	for(auto& feed_source : feed_sources)
 	{
-		for(auto& feed_source : feed_sources)
+		//see libxml2 tree1.c example file for the general structure used.
+		LIBXML_TEST_VERSION
+
+		xmlDoc *doc = xmlReadFile(feed_source.second.data(), nullptr, XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS | XML_PARSE_NOCDATA);
+
+		if(doc)
 		{
-			std::shared_ptr<xercesc::XercesDOMParser> rss_feed_data_parser;
-			rss_feed_data_parser.reset(new xercesc::XercesDOMParser);
+			xmlNode *root_element = xmlDocGetRootElement(doc);
 
-			rss_feed_data_parser->setIncludeIgnorableWhitespace(false);
-			rss_feed_data_parser->setLoadSchema(false);
-			rss_feed_data_parser->setLoadExternalDTD(false);
-			rss_feed_data_parser->setCreateCommentNodes(false);
-
-			if(_xml_parse_status_output_enabled)
+			if(root_element)
 			{
-				std::cout << "parsing: " << feed_source.first << ".\n";
+				ns_grss_model::
+				unit_type_list_rss_item rss_feed_values;
+				rss_feed_values.reserve(_list_reserve_size);
+
+				rss_feeds[feed_source.first] = rss_feed_values;
+
+				collect_feed_items(root_element, rss_feeds[feed_source.first]);
 			}
 
-			rss_feed_data_parser->parse(feed_source.second.data());
-
-			//The deleter from the parser will ensure subsequent objects are deallocated.
-			//Confirmed this with Valgrind.
-			if(rss_feed_data_parser)
-			{
-				xercesc::DOMDocument* rss_feed_xml_dom = rss_feed_data_parser->getDocument();
-
-				if(rss_feed_xml_dom)
-				{
-					xercesc::DOMElement* rss_feed_xml_root = rss_feed_xml_dom->getDocumentElement();
-
-					if(rss_feed_xml_root)
-					{
-						{
-							ns_grss_model::
-							unit_type_list_rss_item rss_feed_values;
-							rss_feed_values.reserve(_list_reserve_size);
-
-							rss_feeds[feed_source.first] = rss_feed_values;
-						}
-
-						if(_xml_parse_status_output_enabled)
-						{
-							std::cout << "processing: " << feed_source.first << ".\n";
-						}
-
-						collect_feed_items(rss_feed_xml_root, rss_feeds[feed_source.first]);
-
-						if(_xml_parse_status_output_enabled)
-						{
-							std::cout << "processing done.\n";
-						}
-					}
-
-				}
-			}
-
-			if(_xml_parse_status_output_enabled)
-			{
-				std::cout << "parse completed.\n";
-			}
+			xmlFreeDoc(doc);
+			xmlCleanupParser();
 		}
 	}
-	xercesc::XMLPlatformUtils::Terminate();
 
 	return;
 }
 
-//See the information for Overload #2 for this function.
-//This is an adapter function that transitions a recursive call from 
-//	an interface that uses an XMLElement type to one that uses a more 
-//	generic DOMNode type. This adaptation is encapsulated here rather than 
-//	leave that as an exercise immediately following XML parsing.
-//Overload #1. This will normally be called first when using Xerces in the way
-//	Xerces is used in this module.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//See libxml2 tree1.c example file for the general structure used. 9/24/2015
 static void 
-collect_feed_items(const xercesc::DOMElement* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items)
+collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items)
 {
-	const xercesc::DOMNodeList* nodes = xml_element->getChildNodes();
-
-	const XMLSize_t total_nodes = nodes->getLength();
-
-	for(XMLSize_t node_n = 0; node_n < total_nodes; node_n++)
+	for(xmlNode* current_node = xml_element; (current_node != nullptr); current_node = current_node->next)
 	{
-		xercesc::DOMNode* current_node = nodes->item(node_n);
+		if(current_node->type == XML_ELEMENT_NODE)
+		{
+			const std::string current_local_name = get_string_from_xmlchar(current_node->name, switch_letter_case);
 
-		collect_feed_items(current_node, feed_items);
+			if(current_local_name == _element_name_item)
+			{
+				feed_items.push_back(ns_grss_model::unit_type_list_rss_item_value());
+			}
+			else if(is_an_approved_rss_data_name(current_local_name))
+			{
+				const std::string parent_local_name = get_string_from_xmlchar(current_node->parent->name, nullptr);
+
+				if(parent_local_name == _element_name_item && !feed_items.empty())
+				{
+					ns_grss_model::
+					unit_type_list_rss_item_value& feed_item = feed_items.back();
+
+					std::string node_data;
+					{
+						xmlChar* node_value = xmlNodeGetContent(current_node);
+
+						node_data = get_string_from_xmlchar(node_value, nullptr);
+
+						xmlFree(node_value);
+					}
+
+					feed_item[current_local_name] = node_data;
+				}
+			}
+		}
+
+		collect_feed_items(current_node->children, feed_items);
 	}
 
 	return;
 }
 
-//Iterates through XML Elements represented as generic DOM Nodes.
-//The DOM Nodes interface was chosen since it is generally the same across
-//	many XML API. This allows you to switch the code to another 
-//	XML API more easily if that is necessary. The key function calls 
-//	for node data access is some form of the following:
-//		get the element name of the node	local name or unqualified name
-//		get the text data an element node	node text or node value
-//		get the sub nodes of an element node	child nodes or children
-//This function is the main function in terms of data retrieval.
-//Overload #2.
-static void 
-collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items)
-{
-	if(xml_element->getNodeType() == _node_type_element)
-	{
-		std::string parent_local_name;
-		{
-			XMLCh* xstr = xercesc::XMLString::replicate(xml_element->getNodeName());
 
-			parent_local_name = get_string_from_xstring(xstr, nullptr);
 
-			xercesc::XMLString::release(&xstr);
-		}
 
-		const xercesc::DOMNodeList* nodes = xml_element->getChildNodes();
 
-		const XMLSize_t total_nodes = nodes->getLength();
 
-		for(XMLSize_t node_n = 0; node_n < total_nodes; node_n++)
-		{
-			const xercesc::DOMNode* current_node = nodes->item(node_n);
 
-			if(current_node)
-			{
-				if(current_node->getNodeType() != _node_type_element)
-				{
-					continue;
-				}
 
-				std::string current_local_name;
-				{
-					XMLCh* xstr = xercesc::XMLString::replicate(current_node->getNodeName());
 
-					current_local_name = get_string_from_xstring(xstr, switch_letter_case);
 
-					xercesc::XMLString::release(&xstr);
-				}
 
-				if(parent_local_name == _element_name_item)
-				{
-					if(is_an_approved_rss_data_name(current_local_name))
-					{
-						std::string node_data;
-						{
-							XMLCh* xstr = xercesc::XMLString::replicate(current_node->getTextContent());
 
-							node_data = get_string_from_xstring(xstr, nullptr);
 
-							xercesc::XMLString::release(&xstr);
-						}
 
-						ns_grss_model::
-						unit_type_list_rss_item_value& feed_item = feed_items.back();
 
-						feed_item[current_local_name] = node_data;
-					}
-				}
-				else
-				{
-					if(current_local_name == _element_name_item)
-					{
-						feed_items.push_back(ns_grss_model::unit_type_list_rss_item_value());
-					}
 
-					collect_feed_items(current_node, feed_items);
-				}
-			}
-			else
-			{
-				if(_invalid_pointers_output_enabled)
-				{
-					std::cout << "node not valid\n";
-				}
-			}
-		}
-	}
 
-	return;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //Defines interest in specific element names from the input XML data.
 //This confirms that an element name exists in the list of approved
@@ -1029,39 +1029,17 @@ is_an_approved_rss_data_name(const std::string& element_name)
 }
 
 static std::string 
-get_string_from_xstring(const XMLCh* xstring_in, decltype(switch_letter_case) transform_func)
+get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func)
 {
 	std::string value;
 
 	if(xstring_in)
 	{
-		{
-			char* transcoded_str = xercesc::XMLString::transcode(xstring_in);
-			{
-				const char* str = transcoded_str;
-
-				value = {str};
-			}
-
-			xercesc::XMLString::release(&transcoded_str);
-		}
-
-		if(value.empty())
-		{
-			if(_xml_string_translate_output_enabled)
-			{
-				std::cout << "second decode attempt.\n";
-			}
-
-			xercesc::TranscodeToStr translator(xstring_in, "UTF-8");
-			const XMLByte* translated_xstr = translator.str();
-
-			std::stringstream ostr;
+		std::stringstream ostr;
 	
-			ostr << translated_xstr;
+		ostr << xstring_in;
 
-			value = ostr.str();
-		}
+		value = ostr.str();
 	}
 
 	if(!value.empty() && transform_func)
@@ -1072,21 +1050,43 @@ get_string_from_xstring(const XMLCh* xstring_in, decltype(switch_letter_case) tr
 	return value;
 }
 
-//SQLite3 is not defined in C++. It is defined in C and I used it that way.
-//The implemented functions that use SQLite3 will have a slight C language orientation.
-//Effort was applied to encapsulate various functions to produce a useful abstraction.
-//This also applies to the implementation of the functions: 
-//	filter_feeds_source, save_feeds, and load_saved_feeds; that I defined to use SQLite3.
-//I decided not to use predefined wrapper libraries that sit a C++ interface atop SQLite3 
-//	since the use of SQLite3 in this engine is not extensive. 
-//In terms of the feeds engine, use of SQLite3 is currently limited to this module.
-//It is used to produce an output data structure and maintain persistent data storage that can be 
-//	conveniently queried in ways that streamline resusitation of stored data into an application 
-//	level data structure. The primary output is a data structure of type unit_type_list_rss.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //SQL: Database infrastructure/tables.
 
 //The following functions under this section deals with supporting database structures for the rss engine.
+
+
+
+
+
+
+
+
+
+
+
+
 
 //Governs the deallocation of an sqlite3 pointer through a pointer resource handle.
 static void 
