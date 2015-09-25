@@ -1,8 +1,6 @@
 #include <algorithm>
-#include <cctype>
 #include <fstream>
 #include <iostream>
-#include <locale>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -26,11 +24,16 @@
 #include "gautier_diagnostics.hxx"
 #include "gautier_rss_model.hxx"
 
-//Michael Gautier
-//On 9/10/2015			Started this.
-//On 9/20/2015 11:11 PM.	Overall solution finished.
-//Applied various tweaks between 10am - 1:30pm, 9/21/2015.
-//On 9/21/2015 02:08 PM.	Casual run of Valgrind reports no memory leaks or allocation errors.
+//	9/24/2015
+//	Uses Apache Xerces and SQLite.
+//	This module is 100% in sync with the next version of this module.
+//	Decided not to merge them since there was no intent to use Apache Xerces 
+//		in the immediate future.
+//	The improvements to this version includes simplified handling of XML Node Text Values; 
+//		better use of memory; and better names for the logical database layer.
+//	Valgrind reports no memory leaks at the application level with leak-check=full.
+//	However, it does report some minor issues with Apache Xerces amounting to 4 bytes of data.
+//	Total heap usage: 86,357 allocs, 86,356 frees, 41,667,683 bytes allocated.
 namespace ns_grss_model = gautier::rss_model;
 
 //Module level types and type aliases.
@@ -53,7 +56,7 @@ static constexpr bool
 	_issued_sql_output_enabled = false,
 	_query_values_translator_output_enabled = false,
 	_invalid_pointers_output_enabled = false,
-	_xerces_string_translate_output_enabled = false,
+	_xml_string_translate_output_enabled = false,
 	_xml_parse_status_output_enabled = false
 ;
 
@@ -74,7 +77,6 @@ static const int
 
 static const std::string 
 	_element_name_item = "item",
-	_empty_str = "",
 	_rss_database_name = "rss_feeds_info.db"
 ;
 
@@ -87,16 +89,14 @@ static const xercesc::DOMNode::NodeType
 	_node_type_element = xercesc::DOMNode::NodeType::ELEMENT_NODE
 ;
 
-static std::string 
-	_begin_transaction_sql_text = "BEGIN IMMEDIATE TRANSACTION",
-	_commit_transaction_sql_text = "COMMIT TRANSACTION"
-;
-
 static std::vector<unit_type_parameter_binding> 
 	_empty_param_set = {
 		unit_type_parameter_binding("", "", parameter_data_type::none)
 	}
 ;
+
+//Implementation, general support functions.
+static int switch_letter_case (const char& in_char);
 
 //Implementation, top-level logic
 //Largely SQL API dependent.
@@ -114,18 +114,23 @@ static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_
 static void collect_feed_items(const xercesc::DOMElement* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
 static void collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
 static bool is_an_approved_rss_data_name(const std::string& element_name);
-static std::string get_string(const XMLCh* xstring_in);
+static std::string get_string_from_xstring(const XMLCh* xstring_in, decltype(switch_letter_case) transform_func);
+
 
 //SQL: Database infrastructure/tables.
-static bool create_database(sqlite3** db_connection);
-static bool check_tables(sqlite3** db_connection);
-static bool create_table(sqlite3** db_connection, const std::string& table_name);
+static void db_connection_guard_finalize(sqlite3* obj);
+static bool db_check_database_exist(sqlite3** db_connection);
+static bool db_check_tables_exist(sqlite3** db_connection);
+static bool db_create_table(sqlite3** db_connection, const std::string& table_name);
+static bool db_transact_begin(sqlite3** db_connection);
+static bool db_transact_end(sqlite3** db_connection);
 
 //SQL: Queries
-static unit_type_parameter_binding create_binding(const std::string name, const std::string value, const parameter_data_type parameter_type);
-static std::pair<bool, int> apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_parameter_binding>& parameter_binding_infos, std::shared_ptr<unit_type_query_values> query_values);
 static int translate_sql_result(void* user_defined_data, int column_count, char** column_values, char** column_names);
-static std::string get_first_string(const unit_type_query_value& row_of_data, const std::string& col_name);
+static bool translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlite3_stmt* sql_stmt);
+static std::pair<bool, int> apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_parameter_binding>& parameter_binding_infos, std::shared_ptr<unit_type_query_values> query_values);
+static std::string get_first_db_column_value(const unit_type_query_value& row_of_data, const std::string& col_name);
+static unit_type_parameter_binding create_binding(const std::string name, const std::string value, const parameter_data_type parameter_type);
 
 //SQL: Diagnostics
 static void output_data_rows(const std::shared_ptr<unit_type_query_values> query_values);
@@ -138,6 +143,7 @@ static void log_sql_op_event(void *pArg, int iErrCode, const char *zMsg);
 
 static void output_op_sql_error_message(char** error_message, const int& line_number);
 static void output_op_sql_error_message(sqlite3** db_connection, const int& line_number);
+
 
 //Public, API.
 
@@ -173,7 +179,7 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 		{
 			while(feeds_file.good() && !feeds_file.eof())
 			{
-				std::string line_data = _empty_str;
+				std::string line_data = "";
 
 				std::getline(feeds_file, line_data);
 
@@ -286,11 +292,13 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 	sqlite3* db_connection = nullptr;
 
-	create_database(&db_connection);
+	db_check_database_exist(&db_connection);
 
 	if(db_connection)
 	{
-		bool tables_exist = check_tables(&db_connection);
+		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
+
+		bool tables_exist = db_check_tables_exist(&db_connection);
 
 		if(tables_exist)
 		{
@@ -300,8 +308,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				char* error_message = 0;
 				auto sql_query_exec_result = SQLITE_BUSY;
 
-				unit_type_query_values* query_values = 
-				new unit_type_query_values;
+				std::shared_ptr<unit_type_query_values> query_values;
+				query_values.reset(new unit_type_query_values);
 
 				{
 					std::string 
@@ -312,7 +320,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 					";
 
 					sql_query_exec_result = 
-					sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values, &error_message);
+					sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 				}
 
 				if(sql_query_exec_result == SQLITE_OK)
@@ -324,8 +332,6 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 						{
 							initial_count_feed_sources = std::stoi(row_of_data["row_count"]);
 						}
-					
-						delete query_values;
 					}
 				}
 				else
@@ -336,7 +342,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 			//IMPORT RSS FEED SOURCES.
 			{
-				apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+				db_transact_begin(&db_connection);
 
 				std::string 
 				sql_text = 
@@ -353,7 +359,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 					apply_sql(&db_connection, sql_text, parameter_values, nullptr);
 				}
 
-				apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+				db_transact_end(&db_connection);
 			}
 
 			//COLLECT RSS FEED NAME CHANGES.
@@ -361,8 +367,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				char* error_message = 0;
 				auto sql_query_exec_result = SQLITE_BUSY;
 
-				unit_type_query_values* query_values = 
-				new unit_type_query_values;
+				std::shared_ptr<unit_type_query_values> query_values;
+				query_values.reset(new unit_type_query_values);
 
 				{
 					std::string 
@@ -378,7 +384,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 					";
 
 					sql_query_exec_result = 
-					sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values, &error_message);
+					sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 				}
 
 				//RECONCILE OLD NAMES WITH NEW.
@@ -386,7 +392,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				{
 					if(query_values)
 					{
-						apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+						db_transact_begin(&db_connection);
 
 						//APPLY NEW NAMES TO OLD.
 						for(const unit_type_query_value row_of_data : *query_values)
@@ -398,8 +404,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
 							{
-								create_binding("@name", get_first_string(row_of_data, "src_name"), parameter_data_type::text),
-								create_binding("@id", get_first_string(row_of_data, "dest_id"), parameter_data_type::integer)
+								create_binding("@name", get_first_db_column_value(row_of_data, "src_name"), parameter_data_type::text),
+								create_binding("@id", get_first_db_column_value(row_of_data, "dest_id"), parameter_data_type::integer)
 							};
 
 							apply_sql(&db_connection, sql_text, parameter_values, nullptr);
@@ -415,15 +421,13 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
 							{
-								create_binding("@id", get_first_string(row_of_data, "src_id"), parameter_data_type::integer)
+								create_binding("@id", get_first_db_column_value(row_of_data, "src_id"), parameter_data_type::integer)
 							};
 
 							apply_sql(&db_connection, sql_text, parameter_values, nullptr);
 						}
 
-						delete query_values;
-
-						apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+						db_transact_end(&db_connection);
 					}
 				}
 				else
@@ -434,7 +438,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 			//ACCEPT REMAINING RSS FEED SOURCES.
 			{
-				apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+				db_transact_begin(&db_connection);
 
 				//Any remaining entries will be accepted.
 				std::string sql_text = 
@@ -442,7 +446,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 				apply_sql(&db_connection, sql_text, _empty_param_set, nullptr);
 
-				apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+				db_transact_end(&db_connection);
 			}
 
 			//When a database is first created new (or is re-created)
@@ -478,13 +482,13 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				 (datetime(entry_date, '+1 hour')) < (datetime('now', 'localtime'));\
 				";
 
-				unit_type_query_values* query_values = 
-				new unit_type_query_values;
+				std::shared_ptr<unit_type_query_values> query_values;
+				query_values.reset(new unit_type_query_values);
 
 				char* error_message = 0;
 
 				auto sql_query_exec_result = 
-				sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values, &error_message);
+				sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 
 				if(sql_query_exec_result == SQLITE_OK)
 				{
@@ -497,8 +501,6 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 							final_feed_sources[name] = url;
 						}
-
-						delete query_values;
 					}
 				}
 				else
@@ -511,8 +513,6 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				final_feed_sources = feed_sources;
 			}
 		}//end of table scope
-
-		sqlite3_close(db_connection);
 	}
 
 	return;
@@ -531,14 +531,16 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 
 	if(!rss_feeds.empty())
 	{
-		create_database(&db_connection);
+		db_check_database_exist(&db_connection);
 	}
 
 	if(db_connection)
 	{
+		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
+
 		enable_op_sql_trace(&db_connection);
 
-		apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+		db_transact_begin(&db_connection);
 
 		for(const type_feed& rss_feed : rss_feeds)
 		{
@@ -635,13 +637,13 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 			}
 		}
 
-		apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+		db_transact_end(&db_connection);
 
 		//Transfers eligible feeds data entries from staging to active.
 		//The staging data remains in place for diagnostic purposes.
 		//Older entries will be purged from both tables.
 		{
-			apply_sql(&db_connection, _begin_transaction_sql_text, _empty_param_set, nullptr);
+			db_transact_begin(&db_connection);
 
 			std::string 
 			sql_text = 
@@ -685,10 +687,8 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 
 			apply_sql(&db_connection, sql_text, _empty_param_set, nullptr);
 
-			apply_sql(&db_connection, _commit_transaction_sql_text, _empty_param_set, nullptr);
+			db_transact_end(&db_connection);
 		}
-
-		sqlite3_close(db_connection);
 	}
 
 	return;
@@ -707,10 +707,12 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 
 	sqlite3* db_connection = nullptr;
 
-	create_database(&db_connection);
+	db_check_database_exist(&db_connection);
 
 	if(db_connection)
 	{
+		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
+
 		//optimization
 		//preallocate feed items in contiguous groups.
 		{
@@ -724,13 +726,13 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 			ORDER BY fs.name;\
 			";
 
-			unit_type_query_values* query_values = 
-			new unit_type_query_values;
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
 
 			char* error_message = 0;
 
 			const auto sqlite_result = 
-			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values, &error_message);
+			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 
 			if(sqlite_result == SQLITE_OK)
 			{
@@ -745,8 +747,6 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 
 						feed_items->reserve(item_count);
 					}
-
-					delete query_values;
 				}
 			}
 			else
@@ -772,13 +772,13 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 				 fd.title;\
 			";
 
-			unit_type_query_values* query_values = 
-			new unit_type_query_values;
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
 
 			char* error_message = 0;
 
 			const auto sqlite_result = 
-			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values, &error_message);
+			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 
 			if(sqlite_result == SQLITE_OK)
 			{
@@ -803,8 +803,6 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 
 						tmp_rss_feeds[feed_name].push_back(feed_item);
 					}
-
-					delete query_values;
 				}
 			}
 			else
@@ -935,7 +933,7 @@ collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type
 		{
 			XMLCh* xstr = xercesc::XMLString::replicate(xml_element->getNodeName());
 
-			parent_local_name = get_string(xstr);
+			parent_local_name = get_string_from_xstring(xstr, nullptr);
 
 			xercesc::XMLString::release(&xstr);
 		}
@@ -959,7 +957,7 @@ collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type
 				{
 					XMLCh* xstr = xercesc::XMLString::replicate(current_node->getNodeName());
 
-					current_local_name = get_string(xstr);
+					current_local_name = get_string_from_xstring(xstr, switch_letter_case);
 
 					xercesc::XMLString::release(&xstr);
 				}
@@ -972,17 +970,13 @@ collect_feed_items(const xercesc::DOMNode* xml_element, ns_grss_model::unit_type
 						{
 							XMLCh* xstr = xercesc::XMLString::replicate(current_node->getTextContent());
 
-							node_data = get_string(xstr);
+							node_data = get_string_from_xstring(xstr, nullptr);
 
 							xercesc::XMLString::release(&xstr);
 						}
 
 						ns_grss_model::
 						unit_type_list_rss_item_value& feed_item = feed_items.back();
-
-						auto switch_letter_case = [](const char& in_char){return std::tolower(in_char);};
-
-						std::transform(current_local_name.begin(), current_local_name.end(), current_local_name.begin(), switch_letter_case);
 
 						feed_item[current_local_name] = node_data;
 					}
@@ -1023,8 +1017,6 @@ is_an_approved_rss_data_name(const std::string& element_name)
 
 	if(!element_name.empty())
 	{
-		auto switch_letter_case = [](const char& in_char){return std::tolower(in_char);};
-
 		std::transform(data_name.begin(), data_name.end(), data_name.begin(), switch_letter_case);
 	}
 
@@ -1036,91 +1028,45 @@ is_an_approved_rss_data_name(const std::string& element_name)
 	return match_found;
 }
 
-//Encapsulates all logic for converting from a Xerces String to 
-// a C++ Standard Library String, std::string in the native code page.
-//*When all else is functioning, this is the most critical function in the engine.
-//Oddly enough, it is only necessary with XML API that require code page translation.
-//Since translation can be a granular process, this function creates a higher 
-//	abstraction level that contains all processing to one area.
-//The function is not very extensive, but in testing of 7,000 inputs, it works
-//	to a highly acceptable level.
-//This function took the most time to develop. Any potential issues noted in the function comments 
-//	may be addressed by compiling with the ICU library.
-//I did not test with that configuration as I was striving for the most functionality 
-//	with the least amount of additional dependencies to maximize portability.
-//The function will work in situations where ICU is not available and system resource is constrained.
-//If you compile the Xerces API with ICU, when that is an option, 
-//	the documentation does imply it will work much better.
 static std::string 
-get_string(const XMLCh* xstring_in)
+get_string_from_xstring(const XMLCh* xstring_in, decltype(switch_letter_case) transform_func)
 {
-	std::string value = _empty_str;
+	std::string value;
 
-	char empty_char = *(_empty_str.data());
-
-	value = {&empty_char};
-
-	if(!xstring_in && _invalid_pointers_output_enabled)
+	if(xstring_in)
 	{
-		std::cout << "xerces string invalid.\n";
+		{
+			char* transcoded_str = xercesc::XMLString::transcode(xstring_in);
+			{
+				const char* str = transcoded_str;
+
+				value = {str};
+			}
+
+			xercesc::XMLString::release(&transcoded_str);
+		}
+
+		if(value.empty())
+		{
+			if(_xml_string_translate_output_enabled)
+			{
+				std::cout << "second decode attempt.\n";
+			}
+
+			xercesc::TranscodeToStr translator(xstring_in, "UTF-8");
+			const XMLByte* translated_xstr = translator.str();
+
+			std::stringstream ostr;
+	
+			ostr << translated_xstr;
+
+			value = ostr.str();
+		}
 	}
-	//Documentation on the Xerces API states that XMLString is not a publicly supported
-	//	part of Xerces but that they are working towards making it publicly supported.
-	//At present, it means that the following method to translate a string is 
-	//	not the formally approved method, but it has the benefit of being
-	//	a simple and portable interface.
-	//Xerces provides additional guarantees if you link it to ICU, but I decided 
-	//	to forgo that for now since the capabilities of ICU are not desired 
-	//	at this time and I wanted to achieve a minimally viable solution that 
-	//	can function in more constrained situations where ICU may be unavailable
-	//	and to allow swapping out APIs that may or may not support such extension.
-	else
+
+	if(!value.empty() && transform_func)
 	{
-		char* transcoded_str = xercesc::XMLString::transcode(xstring_in);
-		{
-			const char* str = transcoded_str;
-
-			value = {str};
-		}
-
-		xercesc::XMLString::release(&transcoded_str);
-	}
-
-	//Fallback approach.
-	//Custom defined by Michael Gautier, 9/17/2015.
-	//Based on information from: 
-	//The C++ Standard Library, 2nd Edition by Nicolai Josuttis, Chapter 16.
-	//Recovers strings not translated by Xerces.
-	//On a sample run across 19 rss feeds involving 7,506 string conversions, 
-	//	this method translated 44 string unapproachable by the Xerces method above.
-	//Known flaw: Not all special characters are handled by this method.
-	if(value.empty())
-	{
-		if(_xerces_string_translate_output_enabled)
-		{
-			std::cout << "second decode attempt.\n";
-		}
-
-		xercesc::TranscodeToStr translator(xstring_in, "UTF-8");
-
-		XMLSize_t translated_xstr_size = translator.length();
-		const XMLByte* translated_xstr = translator.str();
-
-		value.clear();
-		value.reserve(translated_xstr_size);
-
-		for(XMLSize_t index = 0; index < translated_xstr_size; index++)
-		{
-			XMLByte src_data = *(translated_xstr+index);
-
-			const wchar_t wdata = std::char_traits<wchar_t>::to_char_type(src_data);
-
-			auto data = std::use_facet<std::ctype<wchar_t>>(std::locale()).narrow(wdata, ' ');//substitute with space so that absent chars do not result in bunched words.
-
-			const char cdata = data;
-
-			value.push_back(cdata);
-		}
+		std::transform(value.begin(), value.end(), value.begin(), transform_func);
 	}
 
 	return value;
@@ -1141,15 +1087,28 @@ get_string(const XMLCh* xstring_in)
 //SQL: Database infrastructure/tables.
 
 //The following functions under this section deals with supporting database structures for the rss engine.
+
+//Governs the deallocation of an sqlite3 pointer through a pointer resource handle.
+static void 
+db_connection_guard_finalize(sqlite3* obj)
+{
+	if(obj)
+	{
+		sqlite3_close(obj);
+	}
+
+	return;
+}
+
 //Make a database file if one does not exist.
 //Not currently a halting error if this fails. 
 //Rather, the process fails silently if a database cannot be made available.
 static bool 
-create_database(sqlite3** db_connection)
+db_check_database_exist(sqlite3** db_connection)
 {
 	bool success = false;
 
-	auto open_result = sqlite3_open_v2(_rss_database_name.data(), &(*db_connection), SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+	auto open_result = sqlite3_open_v2(_rss_database_name.data(), db_connection, SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
 
 	if(open_result == SQLITE_OK && db_connection)
 	{
@@ -1166,9 +1125,9 @@ create_database(sqlite3** db_connection)
 
 //Examines the database for the existence of tables.
 //Uses an aggregate function to determine if a table exists.
-//If the table does not exist, dispatches a call to create_table, to define the table in the database.
+//If the table does not exist, dispatches a call to db_create_table, to define the table in the database.
 static bool 
-check_tables(sqlite3** db_connection)
+db_check_tables_exist(sqlite3** db_connection)
 {
 	bool success = false;
 
@@ -1201,7 +1160,7 @@ check_tables(sqlite3** db_connection)
 
 			if(query_values)
 			{
-				const auto row_count = std::stoul(get_first_string(query_values->front(), "row_count"));
+				const auto row_count = std::stoul(get_first_db_column_value(query_values->front(), "row_count"));
 
 				bool exists = (row_count > 0);
 
@@ -1212,7 +1171,7 @@ check_tables(sqlite3** db_connection)
 				else//not exists
 				{
 					const bool table_created = 
-					create_table(db_connection, table_name);
+					db_create_table(db_connection, table_name);
 
 					if(table_created)
 					{
@@ -1230,17 +1189,17 @@ check_tables(sqlite3** db_connection)
 
 //Defines tables in the relational database used by the rss engine.
 static bool 
-create_table(sqlite3** db_connection, const std::string& table_name)
+db_create_table(sqlite3** db_connection, const std::string& table_name)
 {
 	bool success = false;
 
 	if(db_connection)
 	{
-		std::string create_table_statement_text = "";
+		std::string db_create_table_statement_text = "";
 
 		if(table_name == "rss_feed_source")
 		{
-			create_table_statement_text = 
+			db_create_table_statement_text = 
 			"CREATE TABLE " + table_name + "\
 			(\
 				id INTEGER PRIMARY KEY ASC,\
@@ -1253,7 +1212,7 @@ create_table(sqlite3** db_connection, const std::string& table_name)
 		}
 		else if(table_name == "rss_feed_data" || table_name == "rss_feed_data_staging")
 		{
-			create_table_statement_text = 
+			db_create_table_statement_text = 
 			"CREATE TABLE " + table_name + "\
 			(\
 				id INTEGER PRIMARY KEY ASC,\
@@ -1267,12 +1226,12 @@ create_table(sqlite3** db_connection, const std::string& table_name)
 			 ";
 		}
 
-		if(!create_table_statement_text.empty())
+		if(!db_create_table_statement_text.empty())
 		{
 			char* error_message = 0;
 
 			const auto sqlite_result = 
-			sqlite3_exec(*db_connection, create_table_statement_text.data(), nullptr, nullptr, &error_message);
+			sqlite3_exec(*db_connection, db_create_table_statement_text.data(), nullptr, nullptr, &error_message);
 
 			if(sqlite_result == SQLITE_OK)
 			{
@@ -1286,6 +1245,30 @@ create_table(sqlite3** db_connection, const std::string& table_name)
 	}
 
 	return success;
+}
+
+static bool 
+db_transact_begin(sqlite3** db_connection)
+{
+	static std::string 
+	sql_text = "BEGIN IMMEDIATE TRANSACTION";
+
+	auto sqlite_result = 
+	apply_sql(db_connection, sql_text, _empty_param_set, nullptr);
+
+	return sqlite_result.first;
+}
+
+static bool 
+db_transact_end(sqlite3** db_connection)
+{
+	static std::string 
+	sql_text = "COMMIT TRANSACTION";
+
+	auto sqlite_result = 
+	apply_sql(db_connection, sql_text, _empty_param_set, nullptr);
+
+	return sqlite_result.first;
 }
 
 //SQL: Queries
@@ -1415,39 +1398,8 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 
 					if(sqlite_result == SQLITE_ROW)
 					{
-						if(query_values)
-						{
-							int total_columns = sqlite3_column_count(sql_stmt);
-
-							unit_type_query_value row_of_data;
-
-							for(decltype(total_columns) col_n = 0; col_n < total_columns; col_n++)
-							{
-								std::string column_name, column_value;
-
-								column_name = sqlite3_column_name(sql_stmt, col_n);
-								column_value = "";
-
-								auto column_char_seq = sqlite3_column_text(sql_stmt, col_n);
-								auto column_char_bytes = sqlite3_column_bytes(sql_stmt, col_n);
-
-								auto char_sz = sizeof(*column_char_seq);
-								auto chars_n = column_char_bytes/char_sz;
-
-								for(decltype(chars_n) data_n = 0; data_n < chars_n; data_n++)
-								{
-									auto data = std::char_traits<char>::to_char_type(*(column_char_seq+data_n));
-								
-									column_value.push_back(data);
-								}
-
-								row_of_data[column_name] = column_value;
-							}
-
-							query_values->push_back(row_of_data);
-						}
-
-						success = true;
+						success = 
+						translate_sql_result(query_values, sql_stmt);
 					}
 				}while(sqlite_result != SQLITE_DONE);
 			}
@@ -1524,6 +1476,51 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 	return std::pair<bool, int>(success, row_count);
 }
 
+//Converts the columns in an sqlite3_stmt structure to query_value rows;
+static bool 
+translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlite3_stmt* sql_stmt)
+{
+	bool success = false;
+
+	if(query_values)
+	{
+		using n_unit = unsigned;
+
+		const n_unit total_columns = sqlite3_column_count(sql_stmt);
+
+		unit_type_query_value 
+		row_of_data;
+
+		for(n_unit col_n = 0; col_n < total_columns; col_n++)
+		{
+			const std::string 
+			column_name = sqlite3_column_name(sql_stmt, col_n);
+
+			std::stringstream ostr;
+			ostr << sqlite3_column_text(sql_stmt, col_n);
+
+			row_of_data[column_name] = ostr.str();
+		}
+
+		success = 
+		(total_columns == row_of_data.size());
+
+		if(success)
+		{
+			query_values->push_back(row_of_data);
+		}
+		else
+		{
+			std::cout << "requested " 
+			<< total_columns << " columns " 
+			<< "processed only " << row_of_data.size()
+			<< ".\n";
+		}
+	}
+
+	return success;
+}
+
 //Callback function for sqlite3_exec.
 //Defined to build a data structure, unit_type_query_values that represents a tabular result set.
 //This result set can be traversed to calling process that issued the sql statement used to generate it.
@@ -1537,11 +1534,14 @@ translate_sql_result(void* user_defined_data, int column_count, char** column_va
 		query_values = static_cast<unit_type_query_values*>(user_defined_data);
 	}
 
-	unit_type_query_value row_of_data;//This is the actual row of data.
+	unit_type_query_value 
+	row_of_data;//This is the actual row of data.
+
+	using n_unit = decltype(column_count);
 
 	//every column for the row should be accessible from here.
 	//transfer each column to a corresponding column in the row_of_data variable.
-	for(decltype(column_count) column_index = 0; column_index < column_count; column_index++)
+	for(n_unit column_index = 0; column_index < column_count; column_index++)
 	{
 		const char* column_name_chars = column_names[column_index];
 		const char* column_value_chars = column_values[column_index];
@@ -1570,7 +1570,7 @@ translate_sql_result(void* user_defined_data, int column_count, char** column_va
 //Goes through the query value lines. The value of the 
 //	very first column key name that matches the input is returned.
 static std::string 
-get_first_string(const unit_type_query_value& row_of_data, const std::string& col_name)
+get_first_db_column_value(const unit_type_query_value& row_of_data, const std::string& col_name)
 {
 	std::string col_value = "";
 
@@ -1690,6 +1690,13 @@ output_op_sql_error_message(char** error_message, const int& line_number)
 	*error_message = nullptr;
 
 	return;
+}
+
+//Support functions.
+static int 
+switch_letter_case (const char& in_char)
+{
+	return std::tolower(in_char);
 }
 
 //Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 . Software distributed under the License is distributed on an "AS IS" BASIS, NO WARRANTIES OR CONDITIONS OF ANY KIND, explicit or implicit. See the License for details on permissions and limitations.
