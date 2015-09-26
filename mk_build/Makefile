@@ -4,6 +4,11 @@ LIB_LOCAL_DIR := ../../../liblocal
 LIB_SQL_DIR := $(LIB_LOCAL_DIR)/libsqlite3_gcc
 LIB_XML_DIR := $(LIB_LOCAL_DIR)/libxml2_gcc
 
+ifeq ($(CXX),clang++) 
+LIB_SQL_DIR := $(LIB_LOCAL_DIR)/libsqlite3_clang
+LIB_XML_DIR := $(LIB_LOCAL_DIR)/libxml2_clang
+endif
+
 SRC_DIR = ../src
 OBJ_DIR := obj
 LIB_DIR := lib
@@ -32,7 +37,7 @@ CPP_MIN := $(OPTO_PARAM) $(CPP_STD) -Wpedantic -Wno-system-headers
 CPP_DBG := -fconstexpr-depth=512 -ffor-scope -fstrict-aliasing -fstrict-overflow -fvisibility-inlines-hidden -Wabi -Wall -Wcast-align -Wcast-qual -Wconversion -Wconversion-null -Wctor-dtor-privacy -Wdelete-non-virtual-dtor -Weffc++ -Wextra -Wfloat-equal -Wformat=2 -Wnarrowing -Wno-unused-function -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual -Wreorder -Wshadow -Wsign-promo -Wstrict-overflow=5 
 
 ifeq ($(CXX),g++) 
-	CPP_DBG := $(CPP_DBG) -fabi-version=0 -fcheck-new -Wdouble-promotion -Wliteral-suffix -Wnoexcept -Wno-non-template-friend -Wno-pmf-conversions -Wstrict-aliasing=3 -Wstrict-null-sentinel -Wsuggest-attribute=const -Wsuggest-attribute=noreturn -Wuseless-cast 
+CPP_DBG := $(CPP_DBG) -fabi-version=0 -fcheck-new -Wdouble-promotion -Wliteral-suffix -Wnoexcept -Wno-non-template-friend -Wno-pmf-conversions -Wstrict-aliasing=3 -Wstrict-null-sentinel -Wsuggest-attribute=const -Wsuggest-attribute=noreturn -Wuseless-cast 
 endif
 
 #Builders
