@@ -71,10 +71,14 @@ ns_diag::write_argv(int argc, char * argv[])
 {
 	if(trace_on && verbosity_level >= 5 && argc > 0)
 	{
-		std::vector<std::string> diag_output;
-		diag_output.reserve(argc);
+		using n_unit = unsigned;
 
-		for(auto cnt = 0; cnt < argc; cnt++)
+		n_unit arg_len = static_cast<n_unit>(argc);
+
+		std::vector<std::string> diag_output;
+		diag_output.reserve(arg_len);
+
+		for(n_unit cnt = 0; cnt < arg_len; cnt++)
 		{
 			const std::string value(argv[cnt]);
 

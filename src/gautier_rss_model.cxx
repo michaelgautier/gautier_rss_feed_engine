@@ -35,10 +35,7 @@ static constexpr bool
 	_sql_trace_enabled = false,
 	_rows_affected_output_enabled = false,
 	_issued_sql_output_enabled = false,
-	_query_values_translator_output_enabled = false,
-	_invalid_pointers_output_enabled = false,
-	_xml_string_translate_output_enabled = false,
-	_xml_parse_status_output_enabled = false
+	_query_values_translator_output_enabled = false
 ;
 
 static bool 
@@ -71,6 +68,8 @@ static std::vector<unit_type_parameter_binding>
 		unit_type_parameter_binding("", "", parameter_data_type::none)
 	}
 ;
+
+using type_list_size = std::vector<void*>::size_type;
 
 //Implementation, general support functions.
 static int switch_letter_case (const char& in_char);
@@ -722,7 +721,7 @@ sql_text =
 					for(auto& row_of_data : *query_values)
 					{
 						const std::string feed_name = row_of_data["name"];
-						const int item_count = std::stoi(row_of_data["total_sub_items"]);
+						const type_list_size item_count = std::stoul(row_of_data["total_sub_items"]);
 
 						auto feed_items = &(tmp_rss_feeds[feed_name]);
 
@@ -1170,7 +1169,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 
 	if(sqlite_prepare_result == SQLITE_OK)
 	{
-		unsigned params_count = 0;
+		int params_count = 0;
 
 		//Binding the input values to the input sql statement.
 		for(auto& bind_info : parameter_binding_infos)
@@ -1216,7 +1215,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 			}
 		}
 
-		if(params_count != parameter_binding_infos.size())
+		if(static_cast<type_list_size>(params_count) != parameter_binding_infos.size())
 		{
 			success = false;
 
@@ -1233,7 +1232,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 				std::cout 
 				<< std::get<0>(diag_bind_info) << " | " 
 				<< std::get<1>(diag_bind_info) << " | " 
-				<< std::to_string(static_cast<unsigned>(std::get<2>(diag_bind_info))) 
+				<< std::to_string(static_cast<type_list_size>(std::get<2>(diag_bind_info))) 
 				<< "\n";
 			}
 		}
@@ -1342,22 +1341,27 @@ translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlit
 
 	if(query_values)
 	{
-		using n_unit = unsigned;
-
-		const n_unit total_columns = sqlite3_column_count(sql_stmt);
-
 		unit_type_query_value 
 		row_of_data;
 
-		for(n_unit col_n = 0; col_n < total_columns; col_n++)
+		type_list_size total_columns = 0L;
 		{
-			const std::string 
-			column_name = sqlite3_column_name(sql_stmt, col_n);
+			using n_unit = int;
 
-			std::stringstream ostr;
-			ostr << sqlite3_column_text(sql_stmt, col_n);
+			const n_unit max_columns = sqlite3_column_count(sql_stmt);
 
-			row_of_data[column_name] = ostr.str();
+			for(n_unit col_n = 0; col_n < max_columns; col_n++)
+			{
+				const std::string 
+				column_name = sqlite3_column_name(sql_stmt, col_n);
+
+				std::stringstream ostr;
+				ostr << sqlite3_column_text(sql_stmt, col_n);
+
+				row_of_data[column_name] = ostr.str();
+			}
+
+			total_columns = static_cast<type_list_size>(max_columns);
 		}
 
 		success = 
