@@ -52,7 +52,7 @@ static const char
 	_feed_config_line_sep = '\t'
 ;
 
-static const int 
+static constexpr int 
 	_list_reserve_size = 200
 ;
 
@@ -187,7 +187,8 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 void 
 ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds)
 {
-	ns_grss_model::unit_type_list_rss_source final_feed_sources;
+	ns_grss_model::unit_type_list_rss_source 
+	final_feed_sources;
 
 	filter_feeds_source(feed_sources, final_feed_sources);
 
@@ -278,7 +279,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 		if(tables_exist)
 		{
 			//COUNT FEED SOURCES.
-			int initial_count_feed_sources = 0;
+			auto initial_count_feed_sources = 0;
 			{
 				char* error_message = 0;
 				auto sql_query_exec_result = SQLITE_BUSY;
@@ -370,11 +371,12 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 						db_transact_begin(&db_connection);
 
 						//APPLY NEW NAMES TO OLD.
-						for(const unit_type_query_value row_of_data : *query_values)
+						for(const auto& row_of_data : *query_values)
 						{
 							//If the input names changed,
 							//but the url stayed the same, update the names to match.
-							std::string sql_text = 
+							std::string 
+sql_text = 
 							"UPDATE rss_feed_source SET name = @name WHERE id = @id;";
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
@@ -389,9 +391,10 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 						//REMOVE DUPLICATE RSS FEED SOURCES.
 						//Once the names are synched, 
 						//remove the source update data.
-						for(const unit_type_query_value row_of_data : *query_values)
+						for(const auto& row_of_data : *query_values)
 						{
-							std::string sql_text = 
+							std::string 
+sql_text = 
 							"DELETE FROM rss_feed_source WHERE id = @id;";
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
@@ -416,7 +419,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				db_transact_begin(&db_connection);
 
 				//Any remaining entries will be accepted.
-				std::string sql_text = 
+				std::string 
+				sql_text = 
 				"UPDATE rss_feed_source set type_code = 0 WHERE type_code = 1";
 
 				apply_sql(&db_connection, sql_text, _empty_param_set, nullptr);
@@ -444,7 +448,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				//expiration offset in the where clause
 				//using a dynamic input to parameterize
 				//the value.
-				std::string sql_text = 
+				std::string 
+sql_text = 
 				"SELECT \
 				 \
 					id,\
@@ -462,7 +467,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 				char* error_message = 0;
 
-				auto sql_query_exec_result = 
+				const auto sql_query_exec_result = 
 				sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
 
 				if(sql_query_exec_result == SQLITE_OK)
@@ -471,8 +476,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 					{
 						for(auto& row_of_data : *query_values)
 						{
-							std::string name = row_of_data["name"];
-							std::string url = row_of_data["url"];
+							const std::string name = row_of_data["name"];
+							const std::string url = row_of_data["url"];
 
 							final_feed_sources[name] = url;
 						}
@@ -691,7 +696,8 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 		//optimization
 		//preallocate feed items in contiguous groups.
 		{
-			std::string sql_text = 
+			std::string 
+sql_text = 
 			"SELECT \
 				fs.name, \
 				COUNT(fd.id) AS total_sub_items \
@@ -732,7 +738,8 @@ load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
 
 		//load the feed detail.
 		{
-			std::string sql_text = 
+			std::string 
+			sql_text = 
 			"SELECT \
 				fs.name AS feed_name, \
 				fd.pub_date, \
@@ -804,16 +811,21 @@ collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed
 		//see libxml2 tree1.c example file for the general structure used.
 		LIBXML_TEST_VERSION
 
-		xmlDoc *doc = xmlReadFile(feed_source.second.data(), nullptr, XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS | XML_PARSE_NOCDATA);
+		auto xml_parse_options = (XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS | XML_PARSE_NOCDATA);
+
+		xmlDoc *doc = 
+		xmlReadFile(feed_source.second.data(), nullptr, xml_parse_options);
 
 		if(doc)
 		{
-			xmlNode *root_element = xmlDocGetRootElement(doc);
+			xmlNode *root_element = 
+			xmlDocGetRootElement(doc);
 
 			if(root_element)
 			{
 				ns_grss_model::
 				unit_type_list_rss_item rss_feed_values;
+
 				rss_feed_values.reserve(_list_reserve_size);
 
 				rss_feeds[feed_source.first] = rss_feed_values;
@@ -837,7 +849,8 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 	{
 		if(current_node->type == XML_ELEMENT_NODE)
 		{
-			const std::string current_local_name = get_string_from_xmlchar(current_node->name, switch_letter_case);
+			const std::string current_local_name = 
+			get_string_from_xmlchar(current_node->name, switch_letter_case);
 
 			if(current_local_name == _element_name_item)
 			{
@@ -845,16 +858,19 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 			}
 			else if(is_an_approved_rss_data_name(current_local_name))
 			{
-				const std::string parent_local_name = get_string_from_xmlchar(current_node->parent->name, nullptr);
+				const std::string parent_local_name = 
+				get_string_from_xmlchar(current_node->parent->name, nullptr);
 
 				if(parent_local_name == _element_name_item && !feed_items.empty())
 				{
 					ns_grss_model::
-					unit_type_list_rss_item_value& feed_item = feed_items.back();
+					unit_type_list_rss_item_value& feed_item = 
+					feed_items.back();
 
 					std::string node_data;
 					{
-						xmlChar* node_value = xmlNodeGetContent(current_node);
+						xmlChar* node_value = 
+						xmlNodeGetContent(current_node);
 
 						node_data = get_string_from_xmlchar(node_value, nullptr);
 
@@ -886,7 +902,7 @@ get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) 
 		value = ostr.str();
 	}
 
-	if(!value.empty() && transform_func)
+	if(transform_func && !value.empty())
 	{
 		std::transform(value.begin(), value.end(), value.begin(), transform_func);
 	}
@@ -903,32 +919,24 @@ is_an_approved_rss_data_name(const std::string& element_name)
 {
 	bool match_found = false;
 
-	std::string data_name = element_name;
+	std::string 
+	data_name = element_name;
 
-	if(!element_name.empty())
+	if(!data_name.empty())
 	{
 		std::transform(data_name.begin(), data_name.end(), data_name.begin(), switch_letter_case);
+
+		auto found = 
+		std::find(_element_names.cbegin(), _element_names.cend(), data_name);
+
+		match_found = (found != _element_names.cend());
 	}
-
-	auto found = 
-	std::find(_element_names.cbegin(), _element_names.cend(), data_name);
-
-	match_found = (found != _element_names.cend());
 
 	return match_found;
 }
 
-//SQLite3 is not defined in C++. It is defined in C and I used it that way.
-//The implemented functions that use SQLite3 will have a slight C language orientation.
-//Effort was applied to encapsulate various functions to produce a useful abstraction.
-//This also applies to the implementation of the functions: 
-//	filter_feeds_source, save_feeds, and load_saved_feeds; that I defined to use SQLite3.
-//I decided not to use predefined wrapper libraries that sit a C++ interface atop SQLite3 
-//	since the use of SQLite3 in this engine is not extensive. 
-//In terms of the feeds engine, use of SQLite3 is currently limited to this module.
-//It is used to produce an output data structure and maintain persistent data storage that can be 
-//	conveniently queried in ways that streamline resusitation of stored data into an application 
-//	level data structure. The primary output is a data structure of type unit_type_list_rss.
+//The goal of the following operations is to produce a data structure of type unit_type_list_rss.
+//Manage access to a database that contains the data used to form the data structure.
 
 //SQL: Database infrastructure/tables.
 
@@ -954,7 +962,10 @@ db_check_database_exist(sqlite3** db_connection)
 {
 	bool success = false;
 
-	auto open_result = sqlite3_open_v2(_rss_database_name.data(), db_connection, SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+	auto sqlite_options = (SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+
+	const auto open_result = 
+	sqlite3_open_v2(_rss_database_name.data(), db_connection, sqlite_options, nullptr);
 
 	if(open_result == SQLITE_OK && db_connection)
 	{
@@ -981,9 +992,9 @@ db_check_tables_exist(sqlite3** db_connection)
 	{
 		const auto expected = _table_names.size();
 
-		unsigned actual = 0;
+		decltype(_table_names)::size_type actual = 0;
 
-		for(const std::string table_name : _table_names)
+		for(const std::string& table_name : _table_names)
 		{
 			std::string 
 			sql_text = 
@@ -1006,9 +1017,10 @@ db_check_tables_exist(sqlite3** db_connection)
 
 			if(query_values)
 			{
-				const auto row_count = std::stoul(get_first_db_column_value(query_values->front(), "row_count"));
+				const auto row_count = 
+				std::stoul(get_first_db_column_value(query_values->front(), "row_count"));
 
-				bool exists = (row_count > 0);
+				const bool exists = (row_count > 0);
 
 				if(exists)
 				{
@@ -1158,7 +1170,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 
 	if(sqlite_prepare_result == SQLITE_OK)
 	{
-		int params_count = 0;
+		unsigned params_count = 0;
 
 		//Binding the input values to the input sql statement.
 		for(auto& bind_info : parameter_binding_infos)
@@ -1167,22 +1179,22 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 
 			int param_n = params_count;
 
-			std::string parameter_name = std::get<0>(bind_info);
-			std::string parameter_text = std::get<1>(bind_info);
-			parameter_data_type param_t = std::get<2>(bind_info);
+			const std::string parameter_name = std::get<0>(bind_info);
+			const std::string parameter_text = std::get<1>(bind_info);
+			const parameter_data_type param_t = std::get<2>(bind_info);
 
 			auto sqlite_result = 0;
 
 			if(param_t == parameter_data_type::text)
 			{
 				const char* param_char_ptr = parameter_text.data();
-				int param_char_ptr_sz = -1;
+				const int param_char_ptr_sz = -1;
 
 				sqlite3_bind_text(sql_stmt, param_n, param_char_ptr, param_char_ptr_sz, SQLITE_TRANSIENT);
 			}
 			else if(param_t == parameter_data_type::integer)
 			{
-				int param_value = std::stoi(parameter_text);
+				const int param_value = std::stoi(parameter_text);
 
 				sqlite3_bind_int(sql_stmt, param_n, param_value);
 			}
@@ -1204,7 +1216,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 			}
 		}
 
-		if(static_cast<unsigned>(params_count) != parameter_binding_infos.size())
+		if(params_count != parameter_binding_infos.size())
 		{
 			success = false;
 
@@ -1308,7 +1320,7 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 	{
 		sqlite3_reset(sql_stmt);//clean it up so finalize can succeed.
 
-		auto sqlite_result = 
+		const auto sqlite_result = 
 		sqlite3_finalize(sql_stmt);
 
 		if(sqlite_result != SQLITE_OK)
@@ -1496,7 +1508,8 @@ enable_op_sql_autolog()
 }
 
 void 
-log_sql_op_event(void *pArg, int iErrCode, const char *zMsg){
+log_sql_op_event(void *pArg, int iErrCode, const char *zMsg)
+{
 	if(_sql_trace_enabled && _sql_trace_active)
 	{
 		if(pArg)
