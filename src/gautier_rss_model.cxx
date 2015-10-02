@@ -77,8 +77,8 @@ static int switch_letter_case (const char& in_char);
 //Implementation, top-level logic
 //Largely SQL API dependent.
 static void filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss_source& final_feed_sources);
-static void save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds);
-static void load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds);
+static void save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items);
+static void make_feed_item(unit_type_query_value& row_of_data, ns_grss_model::unit_type_list_rss_item_value& feed_item);
 
 //Implementation, supporting logic.
 //XML API dependent
@@ -86,7 +86,7 @@ static void load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds);
 //	and converts it to various application defined data structures.
 //*These output data structures drive the entire rss engine.
 //*	unit_type_list_rss and unit_type_list_rss_item are the main data structures.
-static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds);
+static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items);
 static void collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
 static std::string get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func);
 static bool is_an_approved_rss_data_name(const std::string& element_name);
@@ -99,7 +99,7 @@ static bool db_create_table(sqlite3** db_connection, const std::string& table_na
 static bool db_transact_begin(sqlite3** db_connection);
 static bool db_transact_end(sqlite3** db_connection);
 
-//SQL: Queries
+//SQL: Transformation
 static int translate_sql_result(void* user_defined_data, int column_count, char** column_values, char** column_names);
 static bool translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlite3_stmt* sql_stmt);
 static std::pair<bool, int> apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_parameter_binding>& parameter_binding_infos, std::shared_ptr<unit_type_query_values> query_values);
@@ -141,11 +141,11 @@ static void output_op_sql_error_message(sqlite3** db_connection, const int& line
 void //*This function, or a function like it, has to be called first.
 ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, ns_grss_model::unit_type_list_rss_source& feed_sources)
 {
+	ns_grss_model::
+	unit_type_list_rss_source tmp_feed_sources;
+
 	if(!feeds_list_file_name.empty())
 	{
-		ns_grss_model::
-		unit_type_list_rss_source tmp_feed_sources;
-
 		std::ifstream feeds_file;
 		feeds_file.open(feeds_list_file_name);
 
@@ -153,7 +153,8 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 		{
 			while(feeds_file.good() && !feeds_file.eof())
 			{
-				std::string line_data = "";
+				std::string 
+				line_data = "";
 
 				std::getline(feeds_file, line_data);
 
@@ -164,17 +165,35 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 
 					if(tab_pos != std::string::npos)
 					{
-						std::string label = std::string(line_data, 0, tab_pos);
-						std::string url = std::string(line_data, tab_pos+1, std::string::npos);
+						ns_grss_model::unit_type_rss_source 
+						rss_source;
 
-						tmp_feed_sources[label] = url;
+						rss_source.name = std::string(line_data, 0, tab_pos);
+						rss_source.url = std::string(line_data, tab_pos+1, std::string::npos);
+
+						tmp_feed_sources[rss_source.name] = rss_source;
 					}
 				}
 			}
 		}
-
-		feed_sources = tmp_feed_sources;
 	}
+
+	load_feeds_source_list(tmp_feed_sources);
+
+	feed_sources = tmp_feed_sources;
+
+	return;
+}
+
+void 
+ns_grss_model::load_feeds_source_list(ns_grss_model::unit_type_list_rss_source& feed_sources)
+{
+	ns_grss_model::
+	unit_type_list_rss_source tmp_feed_sources;
+
+	filter_feeds_source(feed_sources, tmp_feed_sources);
+
+	feed_sources = tmp_feed_sources;
 
 	return;
 }
@@ -184,20 +203,302 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 //	into a data structure named unit_type_list_rss that is used 
 //	by other processes to present rss headline and web address information.
 void 
-ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds)
+ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources)
 {
-	ns_grss_model::unit_type_list_rss_source 
-	final_feed_sources;
-
-	filter_feeds_source(feed_sources, final_feed_sources);
-
-	if(!final_feed_sources.empty())
+	if(!feed_sources.empty())
 	{
-		collect_feed_items_from_rss(feed_sources, rss_feeds);
+		ns_grss_model::unit_type_list_rss 
+		rss_feed_items;
 
-		save_feeds(rss_feeds);
+		collect_feed_items_from_rss(feed_sources, rss_feed_items);
 
-		load_saved_feeds(rss_feeds);
+		save_feeds(rss_feed_items);
+	}
+
+	return;
+}
+
+void 
+ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items)
+{
+	collect_feeds(feed_sources);
+
+	load_feeds(rss_feed_items);
+
+	return;
+}
+
+void 
+ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
+{
+	ns_grss_model::unit_type_list_rss 
+	tmp_rss_feed_items;
+
+	if(!rss_feed_items.empty())
+	{
+		rss_feed_items.clear();
+	}
+
+	sqlite3* db_connection = nullptr;
+
+	db_check_database_exist(&db_connection);
+
+	if(db_connection)
+	{
+		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
+
+		//optimization
+		//preallocate feed items in contiguous groups.
+		{
+			std::string 
+			sql_text = 
+			"SELECT \
+				fs.name, \
+				COUNT(fd.id) AS total_sub_items \
+			FROM rss_feed_source AS fs INNER JOIN \
+			rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
+			GROUP BY fs.name \
+			ORDER BY fs.name;\
+			";
+
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
+
+			char* error_message = 0;
+
+			const auto sqlite_result = 
+			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
+
+			if(sqlite_result == SQLITE_OK)
+			{
+				if(query_values)
+				{
+					for(auto& row_of_data : *query_values)
+					{
+						const std::string feed_name = row_of_data["name"];
+						const type_list_size item_count = std::stoul(row_of_data["total_sub_items"]);
+
+						auto feed_items = &(tmp_rss_feed_items[feed_name]);
+
+						feed_items->reserve(item_count);
+					}
+				}
+			}
+			else
+			{
+				output_op_sql_error_message(&error_message, __LINE__);
+			}
+		}
+
+		//load the feed detail.
+		{
+			std::string 
+			sql_text = 
+			"SELECT \
+				fs.name AS feed_name, \
+				fd.pub_date, \
+				fd.title, \
+				fd.link, \
+				fd.description \
+			FROM rss_feed_source AS fs INNER JOIN \
+			rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
+			ORDER BY \
+				 fs.name, \
+				 fd.pub_date, \
+				 fd.title;\
+			";
+
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
+
+			char* error_message = 0;
+
+			const auto sqlite_result = 
+			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
+
+			if(sqlite_result == SQLITE_OK)
+			{
+				if(query_values && !query_values->empty())
+				{
+					for(auto& row_of_data : *query_values)
+					{
+						const std::string 
+						feed_name = row_of_data["feed_name"];
+
+						ns_grss_model::
+						unit_type_list_rss_item_value feed_item;
+
+						make_feed_item(row_of_data, feed_item);
+
+						tmp_rss_feed_items[feed_name].push_back(feed_item);
+					}
+				}
+			}
+			else
+			{
+				output_op_sql_error_message(&error_message, __LINE__);
+			}
+		}
+	}
+
+	rss_feed_items = tmp_rss_feed_items;
+
+	return;
+}
+
+void 
+ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source, ns_grss_model::unit_type_list_rss& rss_feed_items)
+{
+	ns_grss_model::unit_type_list_rss 
+	tmp_rss_feed_items;
+
+	if(!rss_feed_items.empty())
+	{
+		rss_feed_items.clear();
+	}
+
+	sqlite3* db_connection = nullptr;
+
+	db_check_database_exist(&db_connection);
+
+	if(db_connection)
+	{
+		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
+
+		//load the feed detail.
+		{
+			std::string 
+			sql_text{};
+
+			std::vector<unit_type_parameter_binding> 
+			parameter_values;
+
+			if(feed_source.id > 0)
+			{
+				sql_text = 
+				"SELECT \
+					fs.name AS feed_name, \
+					fd.pub_date, \
+					fd.title, \
+					fd.link, \
+					fd.description \
+				FROM rss_feed_source AS fs INNER JOIN \
+				rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
+				WHERE fs.id = @id \
+				ORDER BY \
+					 fd.pub_date, \
+					 fd.title;\
+				";
+
+				auto sql_param_binding = 
+				create_binding("@id", std::to_string(feed_source.id), parameter_data_type::integer);
+
+				parameter_values.push_back(sql_param_binding);
+			}
+			else if(!feed_source.name.empty())
+			{
+				sql_text = 
+				"SELECT \
+					fs.name AS feed_name, \
+					fd.pub_date, \
+					fd.title, \
+					fd.link, \
+					fd.description \
+				FROM rss_feed_source AS fs INNER JOIN \
+				rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
+				WHERE fs.name = @feed_name \
+				ORDER BY \
+					 fd.pub_date, \
+					 fd.title;\
+				";
+
+				auto sql_param_binding = 
+				create_binding("@feed_name", feed_source.name, parameter_data_type::text);
+
+				parameter_values.push_back(sql_param_binding);
+			}
+
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
+
+			apply_sql(&db_connection, sql_text, parameter_values, query_values);
+
+			if(query_values && !query_values->empty())
+			{
+				for(auto& row_of_data : *query_values)
+				{
+					const std::string 
+					feed_name = row_of_data["feed_name"];
+
+					ns_grss_model::
+					unit_type_list_rss_item_value feed_item;
+
+					make_feed_item(row_of_data, feed_item);
+
+					tmp_rss_feed_items[feed_name].push_back(feed_item);
+				}
+			}
+		}
+	}
+
+	rss_feed_items = tmp_rss_feed_items;
+
+	return;
+}
+
+void 
+ns_grss_model::load_feed(const std::string feed_source_name, unit_type_list_rss& rss_feed_items)
+{
+	ns_grss_model::unit_type_rss_source 
+	feed_source;
+
+	feed_source.name = feed_source_name;
+
+	load_feed(feed_source, rss_feed_items);
+
+	return;
+}
+
+void 
+ns_grss_model::create_feed_items_list(const unit_type_list_rss& rss_feed_items, std::vector<unit_type_rss_item>& rss_items)
+{
+	for(const auto& named_list : rss_feed_items)
+	{
+		ns_grss_model::
+		unit_type_list_rss_item feed_list = named_list.second;
+
+		for(unit_type_list_rss_item_value& feed_item : feed_list)
+		{
+			unit_type_rss_item 
+			rss_item;
+
+			for(const std::string data_name : _element_names)
+			{
+				const std::string data_value = feed_item[data_name];
+
+				if(data_name == "title")
+				{
+					rss_item.title = data_value;
+				}
+				else if(data_name == "link")
+				{
+					rss_item.link = data_value;
+				}
+				else if(data_name == "description")
+				{
+					rss_item.description = data_value;
+				}
+				else if(data_name == "pub_date")
+				{
+					rss_item.pubdate = data_value;
+				}
+
+			}
+
+			rss_items.push_back(rss_item);
+		}
+
+		break;
 	}
 
 	return;
@@ -211,14 +512,14 @@ ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& fee
 //HTML output is not designed into this version, but would be a quick way 
 //	to put feeds into a format that can be immediately used in a web browser.
 void 
-ns_grss_model::output_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
+ns_grss_model::output_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 {
 	const std::string heading_line = "***********************************************";
 
 	std::stringstream ostr;
 
 	//each feed.
-	for(const auto& named_list : rss_feeds)
+	for(const auto& named_list : rss_feed_items)
 	{
 		const std::string& list_name = named_list.first;
 
@@ -277,44 +578,6 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 		if(tables_exist)
 		{
-			//COUNT FEED SOURCES.
-			auto initial_count_feed_sources = 0;
-			{
-				char* error_message = 0;
-				auto sql_query_exec_result = SQLITE_BUSY;
-
-				std::shared_ptr<unit_type_query_values> query_values;
-				query_values.reset(new unit_type_query_values);
-
-				{
-					std::string 
-					sql_text = 
-					"SELECT \
-						 COUNT(*) AS row_count \
-					FROM rss_feed_source; \
-					";
-
-					sql_query_exec_result = 
-					sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
-				}
-
-				if(sql_query_exec_result == SQLITE_OK)
-				{
-					if(query_values)
-					{
-						//APPLY NEW NAMES TO OLD.
-						for(unit_type_query_value& row_of_data : *query_values)
-						{
-							initial_count_feed_sources = std::stoi(row_of_data["row_count"]);
-						}
-					}
-				}
-				else
-				{
-					output_op_sql_error_message(&error_message, __LINE__);
-				}
-			}
-
 			//IMPORT RSS FEED SOURCES.
 			{
 				db_transact_begin(&db_connection);
@@ -327,8 +590,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				{
 					std::vector<unit_type_parameter_binding> parameter_values = 
 					{
-						create_binding("@name", feed_source.first, parameter_data_type::text),
-						create_binding("@url", feed_source.second, parameter_data_type::text)
+						create_binding("@name", feed_source.second.name, parameter_data_type::text),
+						create_binding("@url", feed_source.second.url, parameter_data_type::text)
 					};
 
 					apply_sql(&db_connection, sql_text, parameter_values, nullptr);
@@ -375,7 +638,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 							//If the input names changed,
 							//but the url stayed the same, update the names to match.
 							std::string 
-sql_text = 
+							sql_text = 
 							"UPDATE rss_feed_source SET name = @name WHERE id = @id;";
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
@@ -393,7 +656,7 @@ sql_text =
 						for(const auto& row_of_data : *query_values)
 						{
 							std::string 
-sql_text = 
+							sql_text = 
 							"DELETE FROM rss_feed_source WHERE id = @id;";
 
 							std::vector<unit_type_parameter_binding> parameter_values = 
@@ -427,70 +690,110 @@ sql_text =
 				db_transact_end(&db_connection);
 			}
 
-			//When a database is first created new (or is re-created)
-			//	there are no entries except the ones initially used 
-			//	to populate it. Therefore, it makes sense to return 
-			//	all data in which subsequent runs will use normal expiration date logic.
-			if(initial_count_feed_sources > 0)
+			//***
+			//	MAIN SQL QUERY.
+			//	Data output drives the main program.
+			//***
+
+			//Websites and networks hosting RSS data may have a policy 
+			//	limiting how often those networks can be queried for RSS information 
+			//	from a given computer.
+			//The query below is written under the default view that this policy is in effect.
+			//A minimum time frame of 1 hour has been chosen as the length of the window 
+			//	before a query can once again be issued for a network source of RSS data.
+
+			//This time window could be parameterized to allow an extension of the window.
+			//	The ability to vary the time window is not encoded in this version 
+			//	since that is was not a desired capability. It can be trivially 
+			//	introduced, but if it is, it is recommended that a small validation check 
+			//	be introduced to enforce the suggested minimum time window of 1 hour.
+
+			//The query uses the type_code field to represent the status of the data.
+			//A type_code of 0 means the rss feed is unchanged in status from the last time 
+			//	a query was applied to it. That means the saved feeds data should be used.
+
+			//A type_code of 1 means the rss feed name changed. The application should never 
+			//	see a type_code of one as that is an intermediate status. SQL is used to 
+			//	managed the transformation from type_code 1 to 0.
+
+			//A type_code of 3 means the rss feed should be clear to query for new data.
+			//	The application may use this as a top-level hint about which feeds 
+			//	may have changed recently. This can be a quick hint that saves traversing 
+			//	the full data set.
+			//There is no need for the application to use this to decide when to issue queries.
+			//All the application has to do is execute the public functions for this module.
+			//The logic within this module determines the actual timing of when to pull new RSS feed data.
+
+			//No status or in-progress information is provided in this version. If that is ever 
+			//	desired, perhaps for a user interface to animate status, then a callback 
+			//	would be the logical choice to provide this level of communication.
+
+			//Based on the above description, the SQL is defined as follows:
+			//	An SQL CASE statement evaluates the entry date field.
+			//	The first case branch deals with rows imported for the first time.
+			//Scenario #1
+			//	Those first-time rows are set to indicate that RSS feed data should be 
+			//	gathered during the next pass query for RSS feed data from networks.
+			//Scenario #2
+			//	The second case branch is the time window spoken about earlier and is 
+			//	what determines when RSS feed data is actually refreshed.
+			//Scenario #3
+			//	The third branch of the CASE statement returns the type_code as is which 
+			//	should normally indicate no action is required for a given RSS feed source.
+
+			//The overall program's activity regarding RSS data collection and organization 
+			//	is primarily affected by the shape of the data determined by the 
+			//	SQL engine when evaluating this query on the data stored.
+
+			std::string 
+			sql_text = 
+			"SELECT \
+			 \
+				id,\
+				CASE \
+					WHEN (datetime(entry_date, '+1 minute')) > (datetime('now', 'localtime')) \
+					THEN 3 \
+					WHEN (datetime(entry_date, '+1 hour')) < (datetime('now', 'localtime')) \
+					THEN 3 \
+					ELSE type_code \
+				END AS type_code,\
+				entry_date,\
+				name,\
+				url\
+			 FROM rss_feed_source;\
+			";
+
+			std::shared_ptr<unit_type_query_values> query_values;
+			query_values.reset(new unit_type_query_values);
+
+			char* error_message = 0;
+
+			const auto sql_query_exec_result = 
+			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
+
+			if(sql_query_exec_result == SQLITE_OK)
 			{
-				//***
-				//	MAIN SQL QUERY.
-				//	Data output drives the main program.
-				//***
-
-				//The preceding was a prerequisite for enabling the retrieval of 
-				//	feed sources based on expiration date.
-
-				//This is the main driver for the entire program.
-				//The data.
-				//A possible modification is to set the 
-				//expiration offset in the where clause
-				//using a dynamic input to parameterize
-				//the value.
-				std::string 
-sql_text = 
-				"SELECT \
-				 \
-					id,\
-					type_code,\
-					entry_date,\
-					name,\
-					url\
-				 FROM rss_feed_source \
-				 WHERE \
-				 (datetime(entry_date, '+1 hour')) < (datetime('now', 'localtime'));\
-				";
-
-				std::shared_ptr<unit_type_query_values> query_values;
-				query_values.reset(new unit_type_query_values);
-
-				char* error_message = 0;
-
-				const auto sql_query_exec_result = 
-				sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
-
-				if(sql_query_exec_result == SQLITE_OK)
+				if(query_values && !query_values->empty())
 				{
-					if(query_values)
+					for(auto& row_of_data : *query_values)
 					{
-						for(auto& row_of_data : *query_values)
-						{
-							const std::string name = row_of_data["name"];
-							const std::string url = row_of_data["url"];
+						ns_grss_model::unit_type_rss_source 
+						rss_source;
 
-							final_feed_sources[name] = url;
-						}
+						rss_source.id = std::stoi(row_of_data["id"]);
+						rss_source.type_code = std::stoi(row_of_data["type_code"]);
+						rss_source.name = row_of_data["name"];
+						rss_source.url = row_of_data["url"];
+
+						final_feed_sources[rss_source.name] = rss_source;
 					}
-				}
-				else
-				{
-					output_op_sql_error_message(&error_message, __LINE__);
 				}
 			}
 			else
 			{
-				final_feed_sources = feed_sources;
+				output_op_sql_error_message(&error_message, __LINE__);
 			}
+
 		}//end of table scope
 	}
 
@@ -500,7 +803,7 @@ sql_text =
 //THE TRUE TRIGGER FOR RSS DOWNLOAD.
 //The idea is to update the main entry date whenever a feed is accessed over the network.
 static void 
-save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
+save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 {
 	using type_feed_item_value = ns_grss_model::unit_type_list_rss_item_value;
 	using type_feed_item = ns_grss_model::unit_type_list_rss_item;//vector of item value
@@ -508,7 +811,7 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 
 	sqlite3* db_connection = nullptr;
 
-	if(!rss_feeds.empty())
+	if(!rss_feed_items.empty())
 	{
 		db_check_database_exist(&db_connection);
 	}
@@ -521,7 +824,7 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 
 		db_transact_begin(&db_connection);
 
-		for(const type_feed& rss_feed : rss_feeds)
+		for(const type_feed& rss_feed : rss_feed_items)
 		{
 			int rss_feed_source_id = 0;
 
@@ -674,126 +977,20 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feeds)
 }
 
 static void 
-load_saved_feeds(ns_grss_model::unit_type_list_rss& rss_feeds)
+make_feed_item(unit_type_query_value& row_of_data, ns_grss_model::unit_type_list_rss_item_value& feed_item)
 {
-	ns_grss_model::unit_type_list_rss 
-	tmp_rss_feeds;
+	const std::string pub_date = row_of_data["pub_date"];
+	const std::string title = row_of_data["title"];
+	const std::string link = row_of_data["link"];
+	const std::string description = row_of_data["description"];
 
-	if(!rss_feeds.empty())
+	feed_item = 
 	{
-		rss_feeds.clear();
-	}
-
-	sqlite3* db_connection = nullptr;
-
-	db_check_database_exist(&db_connection);
-
-	if(db_connection)
-	{
-		std::shared_ptr<sqlite3> db_connection_guard(db_connection, db_connection_guard_finalize);
-
-		//optimization
-		//preallocate feed items in contiguous groups.
-		{
-			std::string 
-sql_text = 
-			"SELECT \
-				fs.name, \
-				COUNT(fd.id) AS total_sub_items \
-			FROM rss_feed_source AS fs INNER JOIN \
-			rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
-			GROUP BY fs.name \
-			ORDER BY fs.name;\
-			";
-
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
-
-			char* error_message = 0;
-
-			const auto sqlite_result = 
-			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
-
-			if(sqlite_result == SQLITE_OK)
-			{
-				if(query_values)
-				{
-					for(auto& row_of_data : *query_values)
-					{
-						const std::string feed_name = row_of_data["name"];
-						const type_list_size item_count = std::stoul(row_of_data["total_sub_items"]);
-
-						auto feed_items = &(tmp_rss_feeds[feed_name]);
-
-						feed_items->reserve(item_count);
-					}
-				}
-			}
-			else
-			{
-				output_op_sql_error_message(&error_message, __LINE__);
-			}
-		}
-
-		//load the feed detail.
-		{
-			std::string 
-			sql_text = 
-			"SELECT \
-				fs.name AS feed_name, \
-				fd.pub_date, \
-				fd.title, \
-				fd.link, \
-				fd.description \
-			FROM rss_feed_source AS fs INNER JOIN \
-			rss_feed_data AS fd ON fs.id = fd.rss_feed_source_id \
-			ORDER BY \
-				 fs.name, \
-				 fd.pub_date, \
-				 fd.title;\
-			";
-
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
-
-			char* error_message = 0;
-
-			const auto sqlite_result = 
-			sqlite3_exec(db_connection, sql_text.data(), translate_sql_result, query_values.get(), &error_message);
-
-			if(sqlite_result == SQLITE_OK)
-			{
-				if(query_values)
-				{
-					for(auto& row_of_data : *query_values)
-					{
-						std::string feed_name = row_of_data["feed_name"];
-						std::string pub_date = row_of_data["pub_date"];
-						std::string title = row_of_data["title"];
-						std::string link = row_of_data["link"];
-						std::string description = row_of_data["description"];
-
-						ns_grss_model::
-						unit_type_list_rss_item_value feed_item = 
-						{
-							{"pubdate", pub_date},
-							{"title", title},
-							{"link", link},
-							{"description", description}
-						};
-
-						tmp_rss_feeds[feed_name].push_back(feed_item);
-					}
-				}
-			}
-			else
-			{
-				output_op_sql_error_message(&error_message, __LINE__);
-			}
-		}
-	}
-
-	rss_feeds = tmp_rss_feeds;
+		{"pubdate", pub_date},
+		{"title", title},
+		{"link", link},
+		{"description", description}
+	};
 
 	return;
 }
@@ -803,37 +1000,40 @@ sql_text =
 //After retrieval, xml represented as various libxml objects.
 //The linked list is traversed in a compact sequenct that converts entries in a unit_type_list_rss data structure.
 static void 
-collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feeds)
+collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items)
 {
 	for(auto& feed_source : feed_sources)
 	{
-		//see libxml2 tree1.c example file for the general structure used.
-		LIBXML_TEST_VERSION
-
-		auto xml_parse_options = (XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS | XML_PARSE_NOCDATA);
-
-		xmlDoc *doc = 
-		xmlReadFile(feed_source.second.data(), nullptr, xml_parse_options);
-
-		if(doc)
+		if(feed_source.second.type_code == 3)//collect from feeds past expire date.
 		{
-			xmlNode *root_element = 
-			xmlDocGetRootElement(doc);
+			//see libxml2 tree1.c example file for the general structure used.
+			LIBXML_TEST_VERSION
 
-			if(root_element)
+			auto xml_parse_options = (XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS | XML_PARSE_NOCDATA);
+
+			xmlDoc *doc = 
+			xmlReadFile(feed_source.second.url.data(), nullptr, xml_parse_options);
+
+			if(doc)
 			{
-				ns_grss_model::
-				unit_type_list_rss_item rss_feed_values;
+				xmlNode *root_element = 
+				xmlDocGetRootElement(doc);
 
-				rss_feed_values.reserve(_list_reserve_size);
+				if(root_element)
+				{
+					ns_grss_model::
+					unit_type_list_rss_item rss_feed_values;
 
-				rss_feeds[feed_source.first] = rss_feed_values;
+					rss_feed_values.reserve(_list_reserve_size);
 
-				collect_feed_items(root_element, rss_feeds[feed_source.first]);
+					rss_feed_items[feed_source.first] = rss_feed_values;
+
+					collect_feed_items(root_element, rss_feed_items[feed_source.first]);
+				}
+
+				xmlFreeDoc(doc);
+				xmlCleanupParser();
 			}
-
-			xmlFreeDoc(doc);
-			xmlCleanupParser();
 		}
 	}
 
