@@ -5,8 +5,6 @@
 #include <map>
 #include <vector>
 
-//Michael Gautier
-//Initial model completed: 9/20/2015 11:11 PM.
 namespace gautier
 {
 	namespace rss_model

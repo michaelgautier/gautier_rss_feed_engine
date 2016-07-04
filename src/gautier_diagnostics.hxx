@@ -12,7 +12,7 @@ namespace gautier
 		namespace diagnostics
 		{
 			constexpr auto trace_on = true;
-			constexpr auto verbosity_level = 2;
+			constexpr auto verbosity_level = 0;
 			//5 = technical detail, 4, little tech detail, 0 - 3 std output
 			//define enumerations later on.
 

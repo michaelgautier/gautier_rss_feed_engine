@@ -34,12 +34,14 @@ INC_XML := $(LIB_XML_DIR)/include/libxml2
 #Intended to limit warnings and errors to application code only.
 INC_SYS_FLAGS := -isystem $(INC_SYS) -isystem $(INC_FLTK) -isystem $(INC_JSON) -isystem $(INC_SQL) -isystem $(INC_XML) 
 
-#All Compiled Objects, third-party and application level.
-OBJ := $(addprefix $(OBJ_DIR)/, jsoncpp.o sqlite.o gautier_diagnostics.o gautier_rss_model.o gautier_screen_structure_build.o gautier_screen_structure_build_json.o gautier_visual_model.o gautier_visual_application_window.o gautier_rss_program.o gautier_rss.o)
+#All Compiled Objects, third-party and application level
+#Michael Gautier 7/3/2016 -- removed the sqlite.o target to use static sqlite lib.
+OBJ := $(addprefix $(OBJ_DIR)/, jsoncpp.o gautier_diagnostics.o gautier_rss_model.o gautier_screen_structure_build.o gautier_screen_structure_build_json.o gautier_visual_model.o gautier_visual_application_window.o gautier_rss_program.o gautier_rss.o)
 
 #Third-party lib files.
 LIB_FLTK := $(LIB_FLTK_DIR)/lib/libfltk.a
 LIB_XML := $(LIB_XML_DIR)/lib/libxml2.a
+LIB_SQL := $(LIB_SQL_DIR)/lib/libsqlite3.a
 
 #Compiler parameters. Minimum standard.
 #	Michael Gautier 20160703		GCC 6 defaults to C++14		CPP_STD := -std=c++11
@@ -67,13 +69,13 @@ C_COMPILE := $(CC) $(C_MIN)
 #No pkg-config for LibXML as it shares some dependencies with FLTK.
 #This line is not necessary if compiling using the shared libraries.
 #This is for static versions of the libraries.
-LIB_LINK := $(LIB_XML) $(LIB_FLTK) `$(LIB_FLTK_DIR)/bin/fltk-config --ldstaticflags`
+LIB_LINK := $(LIB_XML) $(LIB_SQL) $(LIB_FLTK) `$(LIB_FLTK_DIR)/bin/fltk-config --ldstaticflags`
 # -lz
 #---------------------------------------------------------------------------------------------START
 
 #Build the program
 gautier_rss : $(OBJ)
-	$(CPP_LINK) -L$(LIB_FLTK_DIR)/lib -o $@ $(OBJ) $(LIB_LINK)
+	$(CPP_LINK) -L$(LIB_FLTK_DIR)/lib -L$(LIB_SQL_DIR)/lib -o $@ $(OBJ) $(LIB_LINK)
 
 #at this stage in the project, all should compile if any header change
 #beyond that, object files should change if its implementation changes.
@@ -87,9 +89,10 @@ $(OBJ_DIR)/jsoncpp.o : $(LIB_JSONCPP_DIR)/jsoncpp.cpp \
  $(INC_JSON)/json/json.h 
 	$(CXX) $(CPP_COMPILE) $(INC_SYS_FLAGS) -w -o $@ $< 
 
-$(OBJ_DIR)/sqlite.o : $(INC_SQL)/sqlite3.c \
- $(INC_SQL)/sqlite3.h 
-	$(C_COMPILE) $(INC_SYS_FLAGS) -c -o $@ $< 
+#Michael Gautier 20160703 - changed over to ./configure and make with sqlite3. Libs are statically built into liblocal
+#$(OBJ_DIR)/sqlite.o : $(INC_SQL)/sqlite3.c \
+# $(INC_SQL)/sqlite3.h 
+#	$(C_COMPILE) $(INC_SYS_FLAGS) -c -o $@ $< 
 
 $(OBJ_DIR)/gautier_rss_model.o: $(SRC_DIR)/gautier_rss_model.cxx \
  $(SRC_DIR)/gautier_rss_model.hxx \
