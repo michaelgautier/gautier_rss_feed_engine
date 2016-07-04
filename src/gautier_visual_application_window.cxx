@@ -43,7 +43,6 @@ static constexpr double
 ;
 
 static constexpr type_size 
-	_default_visual_height = 24,
 	_default_screen_list_size = 24
 ;
 

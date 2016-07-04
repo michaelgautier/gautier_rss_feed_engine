@@ -359,7 +359,7 @@ ns_visual_model::arrange_elements(ns_visual_model::unit_type_screen* screen, con
 //Explict sizes defined are used as is.
 				if(area.x <= min_v)
 				{
-					if((parent_se_type == se_type_vertical_stack))
+					if(parent_se_type == se_type_vertical_stack)
 					{
 						area.x = previous_area.x;
 					}
@@ -375,7 +375,7 @@ ns_visual_model::arrange_elements(ns_visual_model::unit_type_screen* screen, con
 
 				if(area.y <= min_v)
 				{
-					if((parent_se_type == se_type_vertical_stack))
+					if(parent_se_type == se_type_vertical_stack)
 					{
 						axis_modify_y_bottom_align(previous_area, area);
 					}
@@ -391,7 +391,7 @@ ns_visual_model::arrange_elements(ns_visual_model::unit_type_screen* screen, con
 
 				if(area.w <= min_v)
 				{
-					if((parent_se_type == se_type_vertical_stack))
+					if(parent_se_type == se_type_vertical_stack)
 					{
 						area.w = parent_se.w;
 					}
@@ -405,7 +405,7 @@ ns_visual_model::arrange_elements(ns_visual_model::unit_type_screen* screen, con
 
 				if(area.h <= min_v)
 				{
-					if((parent_se_type == se_type_vertical_stack))
+					if(parent_se_type == se_type_vertical_stack)
 					{
 						area.h = (rem_a.h/tmp_count);
 					}
@@ -416,7 +416,6 @@ ns_visual_model::arrange_elements(ns_visual_model::unit_type_screen* screen, con
 				}
 
 				rem_a.h -= area.h;
-
 			}
 
 			se.set_area(area);

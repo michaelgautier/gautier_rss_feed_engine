@@ -46,6 +46,10 @@ LIB_SQL := $(LIB_SQL_DIR)/lib/libsqlite3.a
 #Compiler parameters. Minimum standard.
 #	Michael Gautier 20160703		GCC 6 defaults to C++14		CPP_STD := -std=c++11
 #	Michael Gautier 20160703		GCC 6 defaults to C++14		C_STD := -std=c11
+ifeq ($(CXX),clang++)
+CPP_STD := -std=c++14
+C_STD := -std=c11
+endif
 #OPTO_PARAM := -O3 #full general optimization. Use this for released versions.
 #OPTO_PARAM := -Os #optimize to a small program size. Useful for comparison.
 OPTO_PARAM := -g #full debugging. This should be default for testing and revision.
