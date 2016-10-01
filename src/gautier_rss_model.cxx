@@ -5,17 +5,16 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <map>
 
 #include <sqlite3.h>
 
-#include "gautier_diagnostics.hxx"
+//#include "gautier_diagnostics.hxx"
 #include "gautier_rss_model.hxx"
 
 #include <cstdio>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
-
-namespace ns_grss_model = gautier::rss_model;
 
 //Module level types and type aliases.
 enum parameter_data_type
@@ -24,10 +23,6 @@ enum parameter_data_type
 	text,
 	integer
 };
-
-using unit_type_query_value = std::map<std::string, std::string>;
-using unit_type_query_values = std::vector<unit_type_query_value>;
-using unit_type_parameter_binding = std::tuple<std::string, std::string, parameter_data_type>;
 
 //Implementation, module level variables.
 
@@ -63,9 +58,9 @@ static const std::vector<std::string>
 	_table_names = {"rss_feed_source", "rss_feed_data", "rss_feed_data_staging"}
 ;
 
-static std::vector<unit_type_parameter_binding> 
+static std::vector<std::tuple<std::string, std::string, parameter_data_type>> 
 	_empty_param_set = {
-		unit_type_parameter_binding("", "", parameter_data_type::none)
+		std::tuple<std::string, std::string, parameter_data_type>("", "", parameter_data_type::none)
 	}
 ;
 
@@ -76,18 +71,18 @@ static int switch_letter_case (const char& in_char);
 
 //Implementation, top-level logic
 //Largely SQL API dependent.
-static void filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss_source& final_feed_sources);
-static void save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items);
-static void make_feed_item(unit_type_query_value& row_of_data, ns_grss_model::unit_type_list_rss_item_value& feed_item);
+static void filter_feeds_source(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources, std::map<std::string, gautier::rss_model::unit_type_rss_source>& final_feed_sources);
+static void save_feeds(const std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items);
+static void make_feed_item(std::map<std::string, std::string>& row_of_data, gautier::rss_model::unit_type_rss_item& feed_item);
 
 //Implementation, supporting logic.
 //XML API dependent
 //Takes a source of data, defined in the XML format, using the RSS 1.0 schema
 //	and converts it to various application defined data structures.
 //*These output data structures drive the entire rss engine.
-//*	unit_type_list_rss and unit_type_list_rss_item are the main data structures.
-static void collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items);
-static void collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items);
+//*	std::map<std::string, std::vector<std::map<std::string, std::string>>> and std::vector<std::map<std::string, std::string>> are the main data structures.
+static void collect_feed_items_from_rss(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources, std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items);
+static void collect_feed_items(xmlNode* xml_element, std::vector<gautier::rss_model::unit_type_rss_item>& feed_items);
 static std::string get_string_from_xmlchar(const xmlChar* xstring_in, decltype(switch_letter_case) transform_func);
 static bool is_an_approved_rss_data_name(const std::string& element_name);
 
@@ -101,13 +96,13 @@ static bool db_transact_end(sqlite3** db_connection);
 
 //SQL: Transformation
 static int translate_sql_result(void* user_defined_data, int column_count, char** column_values, char** column_names);
-static bool translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlite3_stmt* sql_stmt);
-static std::pair<bool, int> apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_parameter_binding>& parameter_binding_infos, std::shared_ptr<unit_type_query_values> query_values);
-static std::string get_first_db_column_value(const unit_type_query_value& row_of_data, const std::string& col_name);
-static unit_type_parameter_binding create_binding(const std::string name, const std::string value, const parameter_data_type parameter_type);
+static bool translate_sql_result(std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values, sqlite3_stmt* sql_stmt);
+static std::pair<bool, int> apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<std::tuple<std::string, std::string, parameter_data_type>>& parameter_binding_infos, std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values);
+static std::string get_first_db_column_value(const std::map<std::string, std::string>& row_of_data, const std::string& col_name);
+static std::tuple<std::string, std::string, parameter_data_type> create_binding(const std::string name, const std::string value, const parameter_data_type parameter_type);
 
 //SQL: Diagnostics
-static void output_data_rows(const std::shared_ptr<unit_type_query_values> query_values);
+static void output_data_rows(const std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values);
 
 static void enable_op_sql_trace(sqlite3** db_connection);
 static void trace_sql_op(void*, const char*);
@@ -122,9 +117,9 @@ static void output_op_sql_error_message(sqlite3** db_connection, const int& line
 //Public, API.
 
 //Take a file with name/value pairs and converts them into a 
-//	a data structure by the name of unit_type_list_rss_source.
+//	a data structure by the name of std::map<std::string, unit_type_rss_source>.
 //	The collect_feed_items_from_rss function is the main function and it needs 
-//		an input data structure of type, unit_type_list_rss_source.
+//		an input data structure of type, std::map<std::string, unit_type_rss_source>.
 //This function provides that output that is the input into collect_feed_items_from_rss.
 //This function is optional and is one form of a solution for deriving the output.
 //This function deals with a plain-text file. The file format has 
@@ -139,10 +134,9 @@ static void output_op_sql_error_message(sqlite3** db_connection, const int& line
 //	tightly coupled to any specific data format other than a plain-text file.
 
 void //*This function, or a function like it, has to be called first.
-ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, ns_grss_model::unit_type_list_rss_source& feed_sources)
+gautier::rss_model::load_feeds_source_list(const std::string& feeds_list_file_name, std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources)
 {
-	ns_grss_model::
-	unit_type_list_rss_source tmp_feed_sources;
+	std::map<std::string, gautier::rss_model::unit_type_rss_source> tmp_feed_sources;
 
 	if(!feeds_list_file_name.empty())
 	{
@@ -165,7 +159,7 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 
 					if(tab_pos != std::string::npos)
 					{
-						ns_grss_model::unit_type_rss_source 
+						gautier::rss_model::unit_type_rss_source 
 						rss_source;
 
 						rss_source.name = std::string(line_data, 0, tab_pos);
@@ -186,10 +180,9 @@ ns_grss_model::load_feeds_source_list(const std::string& feeds_list_file_name, n
 }
 
 void 
-ns_grss_model::load_feeds_source_list(ns_grss_model::unit_type_list_rss_source& feed_sources)
+gautier::rss_model::load_feeds_source_list(std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources)
 {
-	ns_grss_model::
-	unit_type_list_rss_source tmp_feed_sources;
+	std::map<std::string, gautier::rss_model::unit_type_rss_source> tmp_feed_sources;
 
 	filter_feeds_source(feed_sources, tmp_feed_sources);
 
@@ -200,15 +193,14 @@ ns_grss_model::load_feeds_source_list(ns_grss_model::unit_type_list_rss_source& 
 
 //Main logic.
 //Ties together the process of pulling in rss feed data (in XML format) 
-//	into a data structure named unit_type_list_rss that is used 
+//	into a data structure named std::map<std::string, std::vector<std::map<std::string, std::string>>> that is used 
 //	by other processes to present rss headline and web address information.
 void 
-ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources)
+gautier::rss_model::collect_feeds(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources)
 {
 	if(!feed_sources.empty())
 	{
-		ns_grss_model::unit_type_list_rss 
-		rss_feed_items;
+		std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>> rss_feed_items;
 
 		collect_feed_items_from_rss(feed_sources, rss_feed_items);
 
@@ -219,7 +211,7 @@ ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& fee
 }
 
 void 
-ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items)
+gautier::rss_model::collect_feeds(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources, std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
 	collect_feeds(feed_sources);
 
@@ -229,10 +221,9 @@ ns_grss_model::collect_feeds(const ns_grss_model::unit_type_list_rss_source& fee
 }
 
 void 
-ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
+gautier::rss_model::load_feeds(std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
-	ns_grss_model::unit_type_list_rss 
-	tmp_rss_feed_items;
+	std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>> tmp_rss_feed_items;
 
 	if(!rss_feed_items.empty())
 	{
@@ -261,8 +252,8 @@ ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
 			ORDER BY fs.name;\
 			";
 
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
+			std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+			query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 			char* error_message = 0;
 
@@ -308,8 +299,8 @@ ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
 				 fd.title;\
 			";
 
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
+			std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+			query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 			char* error_message = 0;
 
@@ -325,8 +316,7 @@ ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
 						const std::string 
 						feed_name = row_of_data["feed_name"];
 
-						ns_grss_model::
-						unit_type_list_rss_item_value feed_item;
+						gautier::rss_model::unit_type_rss_item feed_item;
 
 						make_feed_item(row_of_data, feed_item);
 
@@ -347,10 +337,9 @@ ns_grss_model::load_feeds(ns_grss_model::unit_type_list_rss& rss_feed_items)
 }
 
 void 
-ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source, ns_grss_model::unit_type_list_rss& rss_feed_items)
+gautier::rss_model::load_feed(const gautier::rss_model::unit_type_rss_source& feed_source, std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
-	ns_grss_model::unit_type_list_rss 
-	tmp_rss_feed_items;
+	std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>> tmp_rss_feed_items;
 
 	if(!rss_feed_items.empty())
 	{
@@ -370,7 +359,7 @@ ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source,
 			std::string 
 			sql_text{};
 
-			std::vector<unit_type_parameter_binding> 
+			std::vector<std::tuple<std::string, std::string, parameter_data_type>> 
 			parameter_values;
 
 			if(feed_source.id > 0)
@@ -418,8 +407,8 @@ ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source,
 				parameter_values.push_back(sql_param_binding);
 			}
 
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
+			std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+			query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 			apply_sql(&db_connection, sql_text, parameter_values, query_values);
 
@@ -430,8 +419,7 @@ ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source,
 					const std::string 
 					feed_name = row_of_data["feed_name"];
 
-					ns_grss_model::
-					unit_type_list_rss_item_value feed_item;
+					gautier::rss_model::unit_type_rss_item feed_item;
 
 					make_feed_item(row_of_data, feed_item);
 
@@ -447,9 +435,9 @@ ns_grss_model::load_feed(const ns_grss_model::unit_type_rss_source& feed_source,
 }
 
 void 
-ns_grss_model::load_feed(const std::string feed_source_name, unit_type_list_rss& rss_feed_items)
+gautier::rss_model::load_feed(const std::string feed_source_name, std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
-	ns_grss_model::unit_type_rss_source 
+	gautier::rss_model::unit_type_rss_source 
 	feed_source;
 
 	feed_source.name = feed_source_name;
@@ -460,40 +448,15 @@ ns_grss_model::load_feed(const std::string feed_source_name, unit_type_list_rss&
 }
 
 void 
-ns_grss_model::create_feed_items_list(const unit_type_list_rss& rss_feed_items, std::vector<unit_type_rss_item>& rss_items)
+gautier::rss_model::create_feed_items_list(const std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items, std::vector<unit_type_rss_item>& rss_items)
 {
 	for(const auto& named_list : rss_feed_items)
 	{
-		ns_grss_model::
-		unit_type_list_rss_item feed_list = named_list.second;
+		std::vector<gautier::rss_model::unit_type_rss_item> feed_list = named_list.second;
 
-		for(unit_type_list_rss_item_value& feed_item : feed_list)
+		for(gautier::rss_model::unit_type_rss_item& feed_item : feed_list)
 		{
-			unit_type_rss_item 
-			rss_item;
-
-			for(const std::string data_name : _element_names)
-			{
-				const std::string data_value = feed_item[data_name];
-
-				if(data_name == "title")
-				{
-					rss_item.title = data_value;
-				}
-				else if(data_name == "link")
-				{
-					rss_item.link = data_value;
-				}
-				else if(data_name == "description")
-				{
-					rss_item.description = data_value;
-				}
-				else if(data_name == "pub_date")
-				{
-					rss_item.pubdate = data_value;
-				}
-
-			}
+			unit_type_rss_item rss_item;
 
 			rss_items.push_back(rss_item);
 		}
@@ -512,7 +475,7 @@ ns_grss_model::create_feed_items_list(const unit_type_list_rss& rss_feed_items, 
 //HTML output is not designed into this version, but would be a quick way 
 //	to put feeds into a format that can be immediately used in a web browser.
 void 
-ns_grss_model::output_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
+gautier::rss_model::output_feeds(const std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
 	const std::string heading_line = "***********************************************";
 
@@ -527,21 +490,17 @@ ns_grss_model::output_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_it
 		ostr << "\t\t" << list_name << "\n";
 		ostr << heading_line << "\n";
 
-		ns_grss_model::
-		unit_type_list_rss_item feed_list = named_list.second;
+		std::vector<gautier::rss_model::unit_type_rss_item> feed_list = named_list.second;
 
 		//Each value is an anonymous item that is a list of name/value pairs
-		for(unit_type_list_rss_item_value& feed_item : feed_list)
+		for(gautier::rss_model::unit_type_rss_item& feed_item : feed_list)
 		{
 			ostr << "------ details ----------------\n";
 
-			//Individual value from an item group (description, link, date, etc)
-			for(const std::string data_name : _element_names)
-			{
-				const std::string data_value = feed_item[data_name];
-
-				ostr << data_name << "\n\t" << data_value << "\n\n";
-			}
+			ostr << "Title\t" << feed_item.title << "\r\n";
+			ostr << "Link\t" << feed_item.link << "\r\n";
+			ostr << "Description\t" << feed_item.description << "\r\n";
+			ostr << "Publication Date\t" << feed_item.pubdate << "\r\n";
 		}
 	}
 
@@ -562,7 +521,7 @@ ns_grss_model::output_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_it
 //external parts other than network calls and a single database file. Self-contained program.
 //Consolidating them in an embedded database is more useful but that comes with a complexity cost.
 static void 
-filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss_source& final_feed_sources)
+filter_feeds_source(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources, std::map<std::string, gautier::rss_model::unit_type_rss_source>& final_feed_sources)
 {
 	enable_op_sql_autolog();
 
@@ -588,7 +547,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 
 				for(const auto& feed_source : feed_sources)
 				{
-					std::vector<unit_type_parameter_binding> parameter_values = 
+					std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 					{
 						create_binding("@name", feed_source.second.name, parameter_data_type::text),
 						create_binding("@url", feed_source.second.url, parameter_data_type::text)
@@ -605,8 +564,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				char* error_message = 0;
 				auto sql_query_exec_result = SQLITE_BUSY;
 
-				std::shared_ptr<unit_type_query_values> query_values;
-				query_values.reset(new unit_type_query_values);
+				std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+				query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 				{
 					std::string 
@@ -641,7 +600,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 							sql_text = 
 							"UPDATE rss_feed_source SET name = @name WHERE id = @id;";
 
-							std::vector<unit_type_parameter_binding> parameter_values = 
+							std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 							{
 								create_binding("@name", get_first_db_column_value(row_of_data, "src_name"), parameter_data_type::text),
 								create_binding("@id", get_first_db_column_value(row_of_data, "dest_id"), parameter_data_type::integer)
@@ -659,7 +618,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 							sql_text = 
 							"DELETE FROM rss_feed_source WHERE id = @id;";
 
-							std::vector<unit_type_parameter_binding> parameter_values = 
+							std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 							{
 								create_binding("@id", get_first_db_column_value(row_of_data, "src_id"), parameter_data_type::integer)
 							};
@@ -763,8 +722,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 			 FROM rss_feed_source;\
 			";
 
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
+			std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+			query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 			char* error_message = 0;
 
@@ -777,7 +736,7 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 				{
 					for(auto& row_of_data : *query_values)
 					{
-						ns_grss_model::unit_type_rss_source 
+						gautier::rss_model::unit_type_rss_source 
 						rss_source;
 
 						rss_source.id = std::stoi(row_of_data["id"]);
@@ -803,12 +762,8 @@ filter_feeds_source(const ns_grss_model::unit_type_list_rss_source& feed_sources
 //THE TRUE TRIGGER FOR RSS DOWNLOAD.
 //The idea is to update the main entry date whenever a feed is accessed over the network.
 static void 
-save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
+save_feeds(const std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
-	using type_feed_item_value = ns_grss_model::unit_type_list_rss_item_value;
-	using type_feed_item = ns_grss_model::unit_type_list_rss_item;//vector of item value
-	using type_feed = std::pair<std::string, type_feed_item>;
-
 	sqlite3* db_connection = nullptr;
 
 	if(!rss_feed_items.empty())
@@ -824,12 +779,12 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 
 		db_transact_begin(&db_connection);
 
-		for(const type_feed& rss_feed : rss_feed_items)
+		for(const auto& rss_feed_item : rss_feed_items)
 		{
 			int rss_feed_source_id = 0;
 
-			const std::string rss_feed_name = rss_feed.first;
-			type_feed_item feed_item = rss_feed.second;
+			const std::string rss_feed_name = rss_feed_item.first;
+			std::vector<gautier::rss_model::unit_type_rss_item> feed_items = rss_feed_item.second;
 
 			//GET RSS FEED DESCRIPTION RECORD.
 			{
@@ -841,13 +796,13 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 				WHERE name = @name; \
 				";
 
-				std::vector<unit_type_parameter_binding> parameter_values = 
+				std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 				{
 					create_binding("@name", rss_feed_name, parameter_data_type::text)
 				};
 
-				std::shared_ptr<unit_type_query_values> query_values;
-				query_values.reset(new unit_type_query_values);
+				std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+				query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 				apply_sql(&db_connection, sql_text, parameter_values, query_values);
 
@@ -881,7 +836,7 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 				}
 			}
 
-			for(type_feed_item_value& values : feed_item)
+			for(auto& feed_item : feed_items)
 			{
 				//IMPORT RSS FEED DATA.
 				{
@@ -905,13 +860,13 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 					)\
 					;";
 
-					std::vector<unit_type_parameter_binding> parameter_values = 
+					std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 					{
 						create_binding("@rss_feed_source_id", std::to_string(rss_feed_source_id), parameter_data_type::integer),
-						create_binding("@pub_date", values["pubdate"], parameter_data_type::text),
-						create_binding("@title", values["title"], parameter_data_type::text),
-						create_binding("@link", values["link"], parameter_data_type::text),
-						create_binding("@description", values["description"], parameter_data_type::text)
+						create_binding("@pub_date", feed_item.pubdate, parameter_data_type::text),
+						create_binding("@title", feed_item.title, parameter_data_type::text),
+						create_binding("@link", feed_item.link, parameter_data_type::text),
+						create_binding("@description", feed_item.description, parameter_data_type::text)
 					};
 
 					apply_sql(&db_connection, sql_text, parameter_values, nullptr);
@@ -977,30 +932,22 @@ save_feeds(const ns_grss_model::unit_type_list_rss& rss_feed_items)
 }
 
 static void 
-make_feed_item(unit_type_query_value& row_of_data, ns_grss_model::unit_type_list_rss_item_value& feed_item)
+make_feed_item(std::map<std::string, std::string>& row_of_data, gautier::rss_model::unit_type_rss_item& feed_item)
 {
-	const std::string pub_date = row_of_data["pub_date"];
-	const std::string title = row_of_data["title"];
-	const std::string link = row_of_data["link"];
-	const std::string description = row_of_data["description"];
-
-	feed_item = 
-	{
-		{"pubdate", pub_date},
-		{"title", title},
-		{"link", link},
-		{"description", description}
-	};
+	feed_item.title = row_of_data["title"];
+	feed_item.link = row_of_data["link"];
+	feed_item.description = row_of_data["description"];
+	feed_item.pubdate = row_of_data["pub_date"];
 
 	return;
 }
 
-//Retrieves rss data at a given url, decodes the XML into a data structure named, unit_type_list_rss.
+//Retrieves rss data at a given url, decodes the XML into a data structure named, std::map<std::string, std::vector<std::map<std::string, std::string>>>.
 //Retrieval logic is done by the xml library which will pull from a file location or web address.
 //After retrieval, xml represented as various libxml objects.
-//The linked list is traversed in a compact sequenct that converts entries in a unit_type_list_rss data structure.
+//The linked list is traversed in a compact sequenct that converts entries in a std::map<std::string, std::vector<std::map<std::string, std::string>>> data structure.
 static void 
-collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed_sources, ns_grss_model::unit_type_list_rss& rss_feed_items)
+collect_feed_items_from_rss(const std::map<std::string, gautier::rss_model::unit_type_rss_source>& feed_sources, std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>>& rss_feed_items)
 {
 	for(auto& feed_source : feed_sources)
 	{
@@ -1021,8 +968,7 @@ collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed
 
 				if(root_element)
 				{
-					ns_grss_model::
-					unit_type_list_rss_item rss_feed_values;
+					std::vector<gautier::rss_model::unit_type_rss_item> rss_feed_values;
 
 					rss_feed_values.reserve(_list_reserve_size);
 
@@ -1042,7 +988,7 @@ collect_feed_items_from_rss(const ns_grss_model::unit_type_list_rss_source& feed
 
 //See libxml2 tree1.c example file for the general structure used. 9/24/2015
 static void 
-collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item& feed_items)
+collect_feed_items(xmlNode* xml_element, std::vector<gautier::rss_model::unit_type_rss_item>& feed_items)
 {
 	for(xmlNode* current_node = xml_element; (current_node != nullptr); current_node = current_node->next)
 	{
@@ -1053,7 +999,7 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 
 			if(current_local_name == _element_name_item)
 			{
-				feed_items.push_back(ns_grss_model::unit_type_list_rss_item_value());
+				feed_items.push_back(gautier::rss_model::unit_type_rss_item());
 			}
 			else if(is_an_approved_rss_data_name(current_local_name))
 			{
@@ -1062,8 +1008,7 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 
 				if(parent_local_name == _element_name_item && !feed_items.empty())
 				{
-					ns_grss_model::
-					unit_type_list_rss_item_value& feed_item = 
+					gautier::rss_model::unit_type_rss_item& feed_item = 
 					feed_items.back();
 
 					std::string node_data;
@@ -1076,7 +1021,22 @@ collect_feed_items(xmlNode* xml_element, ns_grss_model::unit_type_list_rss_item&
 						xmlFree(node_value);
 					}
 
-					feed_item[current_local_name] = node_data;
+					if(current_local_name == "title")
+					{
+						feed_item.title = node_data;
+					}
+					else if(current_local_name == "link")
+					{
+						feed_item.link = node_data;
+					}
+					else if(current_local_name == "description")
+					{
+						feed_item.description = node_data;
+					}
+					else if(current_local_name == "pub_date")
+					{
+						feed_item.pubdate = node_data;
+					}
 				}
 			}
 		}
@@ -1134,7 +1094,7 @@ is_an_approved_rss_data_name(const std::string& element_name)
 	return match_found;
 }
 
-//The goal of the following operations is to produce a data structure of type unit_type_list_rss.
+//The goal of the following operations is to produce a data structure of type std::map<std::string, std::vector<std::map<std::string, std::string>>>.
 //Manage access to a database that contains the data used to form the data structure.
 
 //SQL: Database infrastructure/tables.
@@ -1204,13 +1164,13 @@ db_check_tables_exist(sqlite3** db_connection)
 			  AND name = @table_name; \
 			";
 
-			std::vector<unit_type_parameter_binding> parameter_values = 
+			std::vector<std::tuple<std::string, std::string, parameter_data_type>> parameter_values = 
 			{
 				create_binding("@table_name", table_name, parameter_data_type::text)
 			};
 
-			std::shared_ptr<unit_type_query_values> query_values;
-			query_values.reset(new unit_type_query_values);
+			std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values;
+			query_values.reset(new std::vector<std::map<std::string, std::string>>);
 
 			apply_sql(db_connection, sql_text, parameter_values, query_values);
 
@@ -1331,10 +1291,10 @@ db_transact_end(sqlite3** db_connection)
 //SQL: Queries
 
 //Links a named parameter to data value for use in a parameterized sql statement.
-static unit_type_parameter_binding 
+static std::tuple<std::string, std::string, parameter_data_type> 
 create_binding(const std::string name, const std::string value, const parameter_data_type parameter_type)
 {
-	return unit_type_parameter_binding(name, value, parameter_type);
+	return std::tuple<std::string, std::string, parameter_data_type>(name, value, parameter_type);
 }
 
 //Execute an sql statement.
@@ -1346,7 +1306,7 @@ create_binding(const std::string name, const std::string value, const parameter_
 //	immediately output all error messages to std out rather than return an error data structure.
 //As a result, the return SQLITE result code/error code is primarily for control caller control flow.
 static std::pair<bool, int> 
-apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_parameter_binding>& parameter_binding_infos, std::shared_ptr<unit_type_query_values> query_values)
+apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<std::tuple<std::string, std::string, parameter_data_type>>& parameter_binding_infos, std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values)
 {
 	bool success = false;
 	int row_count = -1;
@@ -1535,13 +1495,13 @@ apply_sql(sqlite3** db_connection, std::string& sql_text, std::vector<unit_type_
 
 //Converts the columns in an sqlite3_stmt structure to query_value rows;
 static bool 
-translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlite3_stmt* sql_stmt)
+translate_sql_result(std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values, sqlite3_stmt* sql_stmt)
 {
 	bool success = false;
 
 	if(query_values)
 	{
-		unit_type_query_value 
+		std::map<std::string, std::string> 
 		row_of_data;
 
 		type_list_size total_columns = 0L;
@@ -1584,19 +1544,19 @@ translate_sql_result(std::shared_ptr<unit_type_query_values> query_values, sqlit
 }
 
 //Callback function for sqlite3_exec.
-//Defined to build a data structure, unit_type_query_values that represents a tabular result set.
+//Defined to build a data structure, std::vector<std::map<std::string, std::string>> that represents a tabular result set.
 //This result set can be traversed to calling process that issued the sql statement used to generate it.
 static int 
 translate_sql_result(void* user_defined_data, int column_count, char** column_values, char** column_names)
 {
-	unit_type_query_values* query_values = nullptr;
+	std::vector<std::map<std::string, std::string>>* query_values = nullptr;
 
 	if(user_defined_data)
 	{
-		query_values = static_cast<unit_type_query_values*>(user_defined_data);
+		query_values = static_cast<std::vector<std::map<std::string, std::string>>*>(user_defined_data);
 	}
 
-	unit_type_query_value 
+	std::map<std::string, std::string> 
 	row_of_data;//This is the actual row of data.
 
 	using n_unit = decltype(column_count);
@@ -1632,7 +1592,7 @@ translate_sql_result(void* user_defined_data, int column_count, char** column_va
 //Goes through the query value lines. The value of the 
 //	very first column key name that matches the input is returned.
 static std::string 
-get_first_db_column_value(const unit_type_query_value& row_of_data, const std::string& col_name)
+get_first_db_column_value(const std::map<std::string, std::string>& row_of_data, const std::string& col_name)
 {
 	std::string col_value = "";
 
@@ -1655,7 +1615,7 @@ get_first_db_column_value(const unit_type_query_value& row_of_data, const std::s
 //----------------------------------------------------------
 //The following functions are used for debugging, profiling use of SQLite3.
 static void 
-output_data_rows(const std::shared_ptr<unit_type_query_values> query_values)
+output_data_rows(const std::shared_ptr<std::vector<std::map<std::string, std::string>>> query_values)
 {
 	if(query_values)
 	{
