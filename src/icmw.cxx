@@ -160,7 +160,7 @@ int icmw::render() {
 	resize_workarea(workarea_w, workarea_h);
 
 	//This part needs to be in a separate thread or timer or something
-	std::string rss_feeds_sources_file_name = "/home/standard/Downloads/gautier_rss_beta/gautier_rss_feeds_test.txt";
+	std::string rss_feeds_sources_file_name = "feeds.txt";
 
 	gautier::rss_model::load_feeds_source_list(rss_feeds_sources_file_name, _rss_feed_sources);
 

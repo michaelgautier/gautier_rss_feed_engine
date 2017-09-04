@@ -13,8 +13,8 @@
 #include "gautier_rss_model.hxx"
 
 #include <cstdio>
-#include <libxml/parser.h>
-#include <libxml/tree.h>
+#include <libxml2/libxml/parser.h>
+#include <libxml2/libxml/tree.h>
 
 //Module level types and type aliases.
 enum parameter_data_type
