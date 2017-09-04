@@ -1,0 +1,32 @@
+#Copyright 2017 Michael Gautier
+#This file is part of Gautier RSS System by Michael Gautier.
+#Gautier RSS System by Michael Gautier is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#Gautier RSS System by Michael Gautier is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+#You should have received a copy of the GNU General Public License along with Gautier RSS System by Michael Gautier.  If not, see <http://www.gnu.org/licenses/>.
+#Portions of the POCO C++ Libraries utilize the following copyrighted material, the use of which is hereby acknowledged.
+#POCO C++ Libraries released under the Boost Software License; Copyright 2017, Applied Informatics Software Engineering GmbH and Contributors; 
+#C++ Standard Library; Copyright 2017 Standard C++ Foundation.
+
+#this file is the sample feeds for testing.
+#Feed Name      Feed URL
+
+Ars Technica	http://feeds.arstechnica.com/arstechnica/index
+BBC	http://feeds.bbci.co.uk/news/rss.xml?edition=int
+CNet	http://www.cnet.com/rss/news/
+CNN Top Stories	http://rss.cnn.com/rss/cnn_topstories.rss
+Forbes Business	http://www.forbes.com/business/feed/
+Forbes Leadership	http://www.forbes.com/leadership/feed/
+Forbes Technology	http://www.forbes.com/technology/feed/
+Phoronix	http://www.phoronix.com/rss.php
+Slashdot	http://rss.slashdot.org/Slashdot/slashdot
+
+#the following is for testing in the event you have manually saved feed output to file.
+#Ars Technica	/home/standardaccount/Downloads/feeds/feed_arstechnica.xml
+#BBC	/home/standardaccount/Downloads/feeds/feed_bbc.xml
+#CNet	/home/standardaccount/Downloads/feeds/feed_cnet.xml
+#CNN Top Stories	/home/standardaccount/Downloads/feeds/feed_cnn.xml
+#Forbes Business	/home/standardaccount/Downloads/feeds/feed_forbes_business.xml
+#Forbes Leadership	/home/standardaccount/Downloads/feeds/feed_forbes_leadership.xml
+#Forbes Technology	/home/standardaccount/Downloads/feeds/feed_forbes_technology.xml
+#Phoronix	/home/standardaccount/Downloads/feeds/feed_phoronix.xml
+#Slashdot	/home/standardaccount/Downloads/feeds/feed_slashdot.xml
