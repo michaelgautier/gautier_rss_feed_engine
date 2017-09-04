@@ -1,6 +1,6 @@
 #include "icmw.hxx"
 #include "gautier_rss_model.hxx"
-
+#include <cmath>
 
 using namespace gautier::rss::rt;
 
@@ -18,6 +18,10 @@ int _LastWidth = 0;
 int _LastHeight = 0;
 
 int _feed_sources_width = 300;
+
+const double _AvgPhysicalScreenSize = 13.667;
+const double _FontSize = 12;
+const double _PrintPointSize = 72.0;
 
 std::map<std::string, gautier::rss_model::unit_type_rss_source> _rss_feed_sources;
 std::map<std::string, std::vector<gautier::rss_model::unit_type_rss_item>> _rss_feed_items;
@@ -121,7 +125,19 @@ int icmw::render() {
 	int workarea_w = Fl::w();
 	int workarea_h = Fl::h();
 
-	resize(xy, xy, workarea_w, workarea_h);
+
+	double diagres = std::hypot(workarea_w, workarea_h);//Revision 9/4/2017 6:20PM
+        double ScreenDpi = diagres/_AvgPhysicalScreenSize;//Revision 9/4/2017 6:20PM
+
+        const double ScaledFontSizeD = (_FontSize/_PrintPointSize) * ScreenDpi;//Revision 9/4/2017 6:20PM
+
+        int LabelW = 0;//Revision 9/4/2017 6:20PM
+        int LabelH = 0;//Revision 9/4/2017 6:20PM
+        fl_font(FL_HELVETICA, ScaledFontSizeD);//Revision 9/4/2017 6:20PM
+
+        fl_measure("WWWWWWWWWWWWWW", LabelW, LabelH);//Revision 9/4/2017 6:20PM
+
+        resize(xy, xy, workarea_w, workarea_h);
 
 	size_range(480, 320, workarea_w, workarea_h);
 
@@ -132,6 +148,8 @@ int icmw::render() {
 	_render_target_root->spacing(1);
 
 	_render_target_feed_sources = new Fl_Hold_Browser(xy, xy, dv, dv);
+        
+        _render_target_feed_sources->textsize(ScaledFontSizeD);
 	_render_target_root->add(_render_target_feed_sources);
 	_render_target_feed_sources->callback(feed_sources_callback);
 
@@ -142,20 +160,29 @@ int icmw::render() {
 	Fl_Group::current(_render_target_feed_items_root);
 
 	_render_target_feed_items = new Fl_Hold_Browser(xy, xy, dv, dv);
+        _render_target_feed_items->textsize(ScaledFontSizeD);//Revision 9/4/2017 6:20PM
 	_render_target_feed_items->callback(feed_items_callback);
 
-	_render_target_feed_items_ictriggers = new Fl_Pack(xy, xy, dv, 28);
+	_render_target_feed_items_ictriggers = new Fl_Pack(xy, xy, dv, LabelH);//Revision 9/4/2017 6:20PM
 	_render_target_feed_items_ictriggers->type(Fl_Pack::HORIZONTAL);
 	_render_target_feed_items_ictriggers->spacing(1);	
 
 	Fl_Group::current(_render_target_feed_items_ictriggers);
 
-	_ictrigger_refresh = new Fl_Button(xy, xy, 120, 28, "Refresh");
+        const std::string LabelText = "Refresh";
+        fl_measure(LabelText.data(), LabelW, LabelH);//Revision 9/4/2017 6:20PM
+
+        _ictrigger_refresh = new Fl_Button(xy, xy, LabelW, LabelH, LabelText.data());
+        _ictrigger_refresh->labelsize(ScaledFontSizeD);//Revision 9/4/2017 6:20PM
 	_ictrigger_refresh->callback(ictrigger_refresh_callback);
 
+        LabelW = 0;//Revision 9/4/2017 6:20PM
+        LabelH = 0;//Revision 9/4/2017 6:20PM
+        
 	Fl_Group::current(_render_target_feed_items_root);
 
 	_render_target_feed_item_details = new Fl_Help_View(xy, xy, dv, dv);
+        _render_target_feed_item_details->textsize(ScaledFontSizeD);//Revision 9/4/2017 6:20PM
 
 	resize_workarea(workarea_w, workarea_h);
 
